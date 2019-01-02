@@ -49,7 +49,7 @@ impl FitbitActivityGrabber {
                 let token = FitbitToken::from(token);
                 // This does not send any requests, so any fail is not an auth fail
                 return Ok(FitbitActivityGrabber {
-                    client: FitbitClient::new(token.clone())?,
+                    client: FitbitClient::new(&token)?,
                     token,
                 });
             }
@@ -60,7 +60,7 @@ impl FitbitActivityGrabber {
         // First time auth
         let auth = FitbitAuth::new(&adata.id, &adata.secret);
         let token = FitbitToken::from(auth.get_token()?);
-        let client = FitbitClient::new(token.clone())?;
+        let client = FitbitClient::new(&token)?;
         Ok(FitbitActivityGrabber { client, token })
     }
 
