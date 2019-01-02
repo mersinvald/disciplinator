@@ -1,0 +1,20 @@
+language: rust
+dist: trusty
+addons:
+  apt:
+    packages:
+      - libssl-dev
+
+cache: cargo
+rust:
+  - nightly
+  - beta
+  - stable
+
+before_script:
+  - (rustup component add rustfmt || true)
+
+script:
+  - if [[ "${TRAVIS_RUST_VERSION}" == stable ]]; then cargo fmt --all -- --check; fi
+  - cargo build
+  - cargo test
