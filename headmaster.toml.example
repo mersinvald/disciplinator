@@ -1,0 +1,12 @@
+[auth]
+client_id = "YOUR_CLIENT_ID"
+client_secret = "YOUR_CLIENT_SECRET"
+
+[limits]
+hourly_minimum_active_time = 5
+hourly_max_accounted_active_time = 10
+absolute_debt_limit = 15
+
+[day]
+day_begins_at = "10:00:00"
+day_ends_at = "20:00:00"

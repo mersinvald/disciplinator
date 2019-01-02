@@ -1,5 +1,5 @@
 use failure::Error;
-use log::{debug, info};
+use log::{debug, error, info};
 use priestess::{
     ActivityGrabber, FitbitActivityGrabber, FitbitAuthData, FitbitToken, SleepInterval, TokenStore,
 };
@@ -9,35 +9,28 @@ use std::env;
 
 use chrono::{Local, NaiveDate, NaiveTime, Timelike};
 
+mod config;
+use crate::config::Config;
+
 fn main() -> Result<(), Error> {
     dotenv::dotenv()?;
-    env_logger::init();
+
+    // Load config
+    let config = Config::load("headmaster.toml")?;
 
     // Connect to Fitbit API
-    let auth_data = load_auth_data()?;
+    let auth_data = load_auth_data(&config)?;
     let grabber = FitbitActivityGrabber::new(&auth_data)?;
 
+    // Save refreshed token
     let token = grabber.get_token();
     token.save(".fitbit_token")?;
 
-    let master = Headmaster::new(
-        grabber,
-        Config {
-            limits: Limits {
-                hourly_minimum_active_time: 5,
-                hourly_max_accounted_active_time: 10,
-                absolute_debt_limit: 15,
-            },
-            day: Day {
-                day_begins_at: NaiveTime::from_hms(10, 0, 0),
-                day_ends_at: NaiveTime::from_hms(22, 0, 0),
-            },
-        },
-    );
+    let master = Headmaster::new(grabber, config);
 
     let debt = master.current_hour_summary()?;
 
-    println!("debt: {}", debt);
+    println!("debt: {:?}", debt);
 
     Ok(())
 }
@@ -47,29 +40,8 @@ struct Headmaster<A> {
     grabber: A,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Config {
-    limits: Limits,
-    day: Day,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Limits {
-    hourly_minimum_active_time: u32,
-    hourly_max_accounted_active_time: u32,
-    absolute_debt_limit: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Day {
-    /// used when there's no sleep data
-    day_begins_at: NaiveTime,
-    /// used regardless of sleep data: there should be some time for leisure in the evening
-    day_ends_at: NaiveTime,
-}
-
 #[derive(Debug, Copy, Clone)]
-struct HourWithActiveMinutes {
+struct Hour {
     hour: u32,
     complete: bool,
     active_minutes: u32,
@@ -82,6 +54,7 @@ enum State {
     DebtCollectionPaused(CurrentHourSummary),
 }
 
+#[derive(Copy, Clone, Debug, Serialize)]
 struct CurrentHourSummary {
     debt: u32,
     active_minutes: u32,
@@ -105,13 +78,14 @@ impl<A: ActivityGrabber> Headmaster<A> {
         info!("CURRENT DEBT: {}", debt);
         Ok(CurrentHourSummary {
             debt,
-            active_minutes: hours.last()
+            active_minutes: hours
+                .last()
                 .map(|h| h.active_minutes)
                 // Failsafe to not to reach the DebtCollection state in case of error
                 .unwrap_or_else(|| {
                     error!("last hour info is not availible");
                     self.config.limits.hourly_max_accounted_active_time
-                })
+                }),
         })
     }
 
@@ -127,12 +101,12 @@ impl<A: ActivityGrabber> Headmaster<A> {
         }
     }
 
-    fn get_active_minutes_hourly(&self) -> Result<Vec<HourWithActiveMinutes>, Error> {
+    fn get_active_minutes_hourly(&self) -> Result<Vec<Hour>, Error> {
         let mut data = self
             .grabber
             .fetch_hourly_activity(Self::current_date())?
             .iter()
-            .map(|h| HourWithActiveMinutes {
+            .map(|h| Hour {
                 hour: h.hour,
                 complete: h.complete,
                 active_minutes: h.active_minutes,
@@ -143,10 +117,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
         Ok(data)
     }
 
-    fn exclude_inactive_hours(
-        &self,
-        mut hours: Vec<HourWithActiveMinutes>,
-    ) -> Result<Vec<HourWithActiveMinutes>, Error> {
+    fn exclude_inactive_hours(&self, mut hours: Vec<Hour>) -> Result<Vec<Hour>, Error> {
         // Fetch the sleeping intervals from FitBit API
         let mut sleep_intervals = self.grabber.fetch_sleep_intervals(Self::current_date())?;
 
@@ -179,10 +150,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
         Ok(hours)
     }
 
-    fn normalize_by_threshold(
-        &self,
-        mut hours: Vec<HourWithActiveMinutes>,
-    ) -> Vec<HourWithActiveMinutes> {
+    fn normalize_by_threshold(&self, mut hours: Vec<Hour>) -> Vec<Hour> {
         hours.iter_mut().for_each(|h| {
             let limits = &self.config.limits;
             h.active_minutes = u32::min(h.active_minutes, limits.hourly_max_accounted_active_time);
@@ -191,10 +159,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
         hours
     }
 
-    fn calculate_debt_hourly(
-        &self,
-        mut hours: Vec<HourWithActiveMinutes>,
-    ) -> Vec<HourWithActiveMinutes> {
+    fn calculate_debt_hourly(&self, mut hours: Vec<Hour>) -> Vec<Hour> {
         let limits = &self.config.limits;
 
         // Calculate first hour activity debt
@@ -207,7 +172,9 @@ impl<A: ActivityGrabber> Headmaster<A> {
             // Next hour debt is previous hour debt + current hour default debt
             let current_hour_minimum = if hours[i].complete {
                 limits.hourly_minimum_active_time
-            } else { 0 };
+            } else {
+                0
+            };
 
             hours[i].debt = (current_hour_minimum + hours[i - 1].debt)
                 .checked_sub(hours[i].active_minutes)
@@ -217,7 +184,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
         hours
     }
 
-    fn calculate_debt(&self, hours: &[HourWithActiveMinutes]) -> u32 {
+    fn calculate_debt(&self, hours: &[Hour]) -> u32 {
         let limits = &self.config.limits;
         hours
             .last()
@@ -230,9 +197,9 @@ impl<A: ActivityGrabber> Headmaster<A> {
     }
 }
 
-fn load_auth_data() -> Result<FitbitAuthData, Error> {
-    let id = env::var("FITBIT_CLIENT_ID")?;
-    let secret = env::var("FITBIT_CLIENT_SECRET")?;
+fn load_auth_data(config: &Config) -> Result<FitbitAuthData, Error> {
+    let id = config.auth.client_id.clone();
+    let secret = config.auth.client_secret.clone();
     let token = FitbitToken::load(".fitbit_token").ok();
 
     Ok(FitbitAuthData { id, secret, token })

@@ -7,6 +7,7 @@
 # token file
 .fitbit_token
 .env
+headmaster.toml
 
 Cargo.lock
 
