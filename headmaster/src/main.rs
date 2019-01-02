@@ -24,19 +24,18 @@ fn main() -> Result<(), Error> {
         grabber,
         Config {
             limits: Limits {
-                hour_minimum_active_time: 5,
-                hour_overtime_limit: 2,
+                hourly_minimum_active_time: 5,
+                hourly_max_accounted_active_time: 10,
                 absolute_debt_limit: 15,
-                absolute_overtime_limit: 5,
             },
             day: Day {
                 day_begins_at: NaiveTime::from_hms(10, 0, 0),
-                day_ends_at: NaiveTime::from_hms(20, 0, 0),
+                day_ends_at: NaiveTime::from_hms(22, 0, 0),
             },
         },
     );
 
-    let debt = master.current_debt()?;
+    let debt = master.current_hour_summary()?;
 
     println!("debt: {}", debt);
 
@@ -56,10 +55,9 @@ struct Config {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Limits {
-    hour_minimum_active_time: i64,
-    hour_overtime_limit: i64,
-    absolute_debt_limit: i64,
-    absolute_overtime_limit: i64,
+    hourly_minimum_active_time: u32,
+    hourly_max_accounted_active_time: u32,
+    absolute_debt_limit: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,15 +69,22 @@ struct Day {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct HourWithDebt {
+struct HourWithActiveMinutes {
     hour: u32,
     complete: bool,
-    debt: i64,
+    active_minutes: u32,
+    debt: u32,
 }
 
 enum State {
     Normal,
-    DebtCollection(i64),
+    DebtCollection(CurrentHourSummary),
+    DebtCollectionPaused(CurrentHourSummary),
+}
+
+struct CurrentHourSummary {
+    debt: u32,
+    active_minutes: u32,
 }
 
 impl<A: ActivityGrabber> Headmaster<A> {
@@ -87,46 +92,61 @@ impl<A: ActivityGrabber> Headmaster<A> {
         Headmaster { config, grabber }
     }
 
-    pub fn current_debt(&self) -> Result<i64, Error> {
-        let hours = self.get_absolute_debt_hourly()?;
+    pub fn current_hour_summary(&self) -> Result<CurrentHourSummary, Error> {
+        let hours = self.get_active_minutes_hourly()?;
         debug!("ABSOLUTE DEBT: \n{:#?}", hours);
         let hours = self.exclude_inactive_hours(hours)?;
         debug!("NORMALIZED BY SLEEPING HOURS: \n{:#?}", hours);
-        let hours = self.normalize_by_hourly_threshold(hours);
-        info!("NORMALIZED BY HOURLY THRESHOLD: \n{:#?}", hours);
+        let hours = self.normalize_by_threshold(hours);
+        info!("NORMALIZED BY THRESHOLD: \n{:#?}", hours);
+        let hours = self.calculate_debt_hourly(hours);
+        info!("HOURLY DEBT CALCULATION: \n{:#?}", hours);
         let debt = self.calculate_debt(&hours);
         info!("CURRENT DEBT: {}", debt);
-        Ok(debt)
+        Ok(CurrentHourSummary {
+            debt,
+            active_minutes: hours.last()
+                .map(|h| h.active_minutes)
+                // Failsafe to not to reach the DebtCollection state in case of error
+                .unwrap_or_else(|| {
+                    error!("last hour info is not availible");
+                    self.config.limits.hourly_max_accounted_active_time
+                })
+        })
     }
 
     pub fn current_state(&self) -> Result<State, Error> {
-        let debt = self.current_debt()?;
-        if debt > 0 {
-            Ok(State::DebtCollection(debt))
+        let stat = self.current_hour_summary()?;
+        let max_accounted = self.config.limits.hourly_max_accounted_active_time;
+        if stat.debt > 0 && stat.active_minutes < max_accounted {
+            Ok(State::DebtCollection(stat))
+        } else if stat.debt > 0 && stat.active_minutes >= max_accounted {
+            Ok(State::DebtCollectionPaused(stat))
         } else {
             Ok(State::Normal)
         }
     }
 
-    fn get_absolute_debt_hourly(&self) -> Result<Vec<HourWithDebt>, Error> {
-        let data = self
+    fn get_active_minutes_hourly(&self) -> Result<Vec<HourWithActiveMinutes>, Error> {
+        let mut data = self
             .grabber
             .fetch_hourly_activity(Self::current_date())?
             .iter()
-            .map(|h| HourWithDebt {
+            .map(|h| HourWithActiveMinutes {
                 hour: h.hour,
                 complete: h.complete,
-                debt: self.config.limits.hour_minimum_active_time - i64::from(h.active_minutes),
+                active_minutes: h.active_minutes,
+                debt: 0,
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         Ok(data)
     }
 
     fn exclude_inactive_hours(
         &self,
-        mut hours: Vec<HourWithDebt>,
-    ) -> Result<Vec<HourWithDebt>, Error> {
+        mut hours: Vec<HourWithActiveMinutes>,
+    ) -> Result<Vec<HourWithActiveMinutes>, Error> {
         // Fetch the sleeping intervals from FitBit API
         let mut sleep_intervals = self.grabber.fetch_sleep_intervals(Self::current_date())?;
 
@@ -146,13 +166,12 @@ impl<A: ActivityGrabber> Headmaster<A> {
 
         hours.iter_mut().for_each(|h| {
             for interval in &sleep_intervals {
+                // Zero debt, zero overtime
+                let max_activity_during_sleep = self.config.limits.hourly_minimum_active_time;
                 if h.hour >= interval.start.hour() && h.hour < interval.end.hour() {
-                    h.debt = 0;
+                    h.active_minutes = max_activity_during_sleep;
                 } else if h.hour == interval.end.hour() {
-                    h.debt -= i64::from(interval.end.minute());
-                    if h.debt < 0 {
-                        h.debt = 0
-                    }
+                    h.active_minutes = u32::min(interval.end.minute(), max_activity_during_sleep);
                 }
             }
         });
@@ -160,40 +179,50 @@ impl<A: ActivityGrabber> Headmaster<A> {
         Ok(hours)
     }
 
-    fn normalize_by_hourly_threshold(&self, mut hours: Vec<HourWithDebt>) -> Vec<HourWithDebt> {
+    fn normalize_by_threshold(
+        &self,
+        mut hours: Vec<HourWithActiveMinutes>,
+    ) -> Vec<HourWithActiveMinutes> {
         hours.iter_mut().for_each(|h| {
             let limits = &self.config.limits;
-            if h.debt > limits.hour_minimum_active_time {
-                h.debt = limits.hour_minimum_active_time;
-            }
-
-            if h.debt < (0 - limits.hour_overtime_limit) {
-                h.debt = 0 - limits.hour_overtime_limit
-            }
+            h.active_minutes = u32::min(h.active_minutes, limits.hourly_max_accounted_active_time);
         });
 
         hours
     }
 
-    fn calculate_debt(&self, hours: &[HourWithDebt]) -> i64 {
+    fn calculate_debt_hourly(
+        &self,
+        mut hours: Vec<HourWithActiveMinutes>,
+    ) -> Vec<HourWithActiveMinutes> {
         let limits = &self.config.limits;
-        // Moving threshold to handle the cases when
-        // hour 1: debt -60
-        // and N consecutive hours are debt-free
+
+        // Calculate first hour activity debt
+        hours[0].debt = limits
+            .hourly_minimum_active_time
+            .checked_sub(hours[0].active_minutes)
+            .unwrap_or(0);
+
+        for i in 1..hours.len() {
+            // Next hour debt is previous hour debt + current hour default debt
+            let current_hour_minimum = if hours[i].complete {
+                limits.hourly_minimum_active_time
+            } else { 0 };
+
+            hours[i].debt = (current_hour_minimum + hours[i - 1].debt)
+                .checked_sub(hours[i].active_minutes)
+                .unwrap_or(0)
+        }
+
         hours
-            .iter()
-            .filter(|h| h.complete)
-            .map(|h| h.debt)
-            .fold(0, |mut acc, debt| {
-                acc += debt;
-                if acc > limits.absolute_debt_limit {
-                    acc = limits.absolute_debt_limit
-                }
-                if acc < (0 - limits.absolute_overtime_limit) {
-                    acc = 0 - limits.absolute_overtime_limit
-                }
-                acc
-            })
+    }
+
+    fn calculate_debt(&self, hours: &[HourWithActiveMinutes]) -> u32 {
+        let limits = &self.config.limits;
+        hours
+            .last()
+            .map(|h| u32::min(h.debt, limits.absolute_debt_limit))
+            .unwrap_or(0)
     }
 
     fn current_date() -> NaiveDate {
