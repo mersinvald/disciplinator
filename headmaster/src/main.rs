@@ -1,11 +1,13 @@
-use priestess::{FitbitActivityGrabber, FitbitAuthData, ActivityGrabber, FitbitToken, TokenStore, SleepInterval};
 use failure::Error;
 use log::{debug, info};
-use serde::{Serialize, Deserialize};
+use priestess::{
+    ActivityGrabber, FitbitActivityGrabber, FitbitAuthData, FitbitToken, SleepInterval, TokenStore,
+};
+use serde::{Deserialize, Serialize};
 
 use std::env;
 
-use chrono::{NaiveDate, NaiveTime, Datelike, Timelike, Local};
+use chrono::{Local, NaiveDate, NaiveTime, Timelike};
 
 fn main() -> Result<(), Error> {
     dotenv::dotenv()?;
@@ -13,23 +15,26 @@ fn main() -> Result<(), Error> {
 
     // Connect to Fitbit API
     let auth_data = load_auth_data()?;
-    let grabber = FitbitActivityGrabber::new(auth_data)?;
+    let grabber = FitbitActivityGrabber::new(&auth_data)?;
 
     let token = grabber.get_token();
     token.save(".fitbit_token")?;
 
-    let master = Headmaster::new(grabber, Config {
-        limits: Limits {
-            hour_minimum_active_time: 5,
-            hour_overtime_limit: 2,
-            absolute_debt_limit: 15,
-            absolute_overtime_limit: 5,
+    let master = Headmaster::new(
+        grabber,
+        Config {
+            limits: Limits {
+                hour_minimum_active_time: 5,
+                hour_overtime_limit: 2,
+                absolute_debt_limit: 15,
+                absolute_overtime_limit: 5,
+            },
+            day: Day {
+                day_begins_at: NaiveTime::from_hms(10, 0, 0),
+                day_ends_at: NaiveTime::from_hms(20, 0, 0),
+            },
         },
-        day: Day {
-            day_begins_at: NaiveTime::from_hms(10, 0, 0),
-            day_ends_at: NaiveTime::from_hms(20, 0, 0),
-        }
-    });
+    );
 
     let debt = master.current_debt()?;
 
@@ -62,7 +67,7 @@ struct Day {
     /// used when there's no sleep data
     day_begins_at: NaiveTime,
     /// used regardless of sleep data: there should be some time for leisure in the evening
-    day_ends_at: NaiveTime
+    day_ends_at: NaiveTime,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -79,10 +84,7 @@ enum State {
 
 impl<A: ActivityGrabber> Headmaster<A> {
     pub fn new(grabber: A, config: Config) -> Self {
-        Headmaster {
-            config,
-            grabber,
-        }
+        Headmaster { config, grabber }
     }
 
     pub fn current_debt(&self) -> Result<i64, Error> {
@@ -107,7 +109,9 @@ impl<A: ActivityGrabber> Headmaster<A> {
     }
 
     fn get_absolute_debt_hourly(&self) -> Result<Vec<HourWithDebt>, Error> {
-        let data = self.grabber.fetch_hourly_activity(Self::current_date())?
+        let data = self
+            .grabber
+            .fetch_hourly_activity(Self::current_date())?
             .iter()
             .map(|h| HourWithDebt {
                 hour: h.hour,
@@ -119,7 +123,10 @@ impl<A: ActivityGrabber> Headmaster<A> {
         Ok(data)
     }
 
-    fn exclude_inactive_hours(&self, mut hours: Vec<HourWithDebt>) -> Result<Vec<HourWithDebt>, Error> {
+    fn exclude_inactive_hours(
+        &self,
+        mut hours: Vec<HourWithDebt>,
+    ) -> Result<Vec<HourWithDebt>, Error> {
         // Fetch the sleeping intervals from FitBit API
         let mut sleep_intervals = self.grabber.fetch_sleep_intervals(Self::current_date())?;
 
@@ -137,33 +144,33 @@ impl<A: ActivityGrabber> Headmaster<A> {
             end: NaiveTime::from_hms(23, 59, 59),
         });
 
-        hours.iter_mut()
-            .for_each(|h| {
-                for interval in &sleep_intervals {
-                    if h.hour >= interval.start.hour() && h.hour < interval.end.hour() {
-                        h.debt = 0;
-                    } else if h.hour == interval.end.hour() {
-                        h.debt -= i64::from(interval.end.minute());
-                        if h.debt < 0 { h.debt = 0 }
+        hours.iter_mut().for_each(|h| {
+            for interval in &sleep_intervals {
+                if h.hour >= interval.start.hour() && h.hour < interval.end.hour() {
+                    h.debt = 0;
+                } else if h.hour == interval.end.hour() {
+                    h.debt -= i64::from(interval.end.minute());
+                    if h.debt < 0 {
+                        h.debt = 0
                     }
                 }
-            });
+            }
+        });
 
         Ok(hours)
     }
 
     fn normalize_by_hourly_threshold(&self, mut hours: Vec<HourWithDebt>) -> Vec<HourWithDebt> {
-        hours.iter_mut()
-            .for_each(|h| {
-                let limits = &self.config.limits;
-                if h.debt > limits.hour_minimum_active_time {
-                    h.debt = limits.hour_minimum_active_time;
-                }
+        hours.iter_mut().for_each(|h| {
+            let limits = &self.config.limits;
+            if h.debt > limits.hour_minimum_active_time {
+                h.debt = limits.hour_minimum_active_time;
+            }
 
-                if h.debt < (0 - limits.hour_overtime_limit) {
-                    h.debt = 0 - limits.hour_overtime_limit
-                }
-            });
+            if h.debt < (0 - limits.hour_overtime_limit) {
+                h.debt = 0 - limits.hour_overtime_limit
+            }
+        });
 
         hours
     }
@@ -173,25 +180,24 @@ impl<A: ActivityGrabber> Headmaster<A> {
         // Moving threshold to handle the cases when
         // hour 1: debt -60
         // and N consecutive hours are debt-free
-        let absolute_debt = hours.iter()
+        hours
+            .iter()
             .filter(|h| h.complete)
             .map(|h| h.debt)
             .fold(0, |mut acc, debt| {
                 acc += debt;
-                if acc > limits.absolute_debt_limit { acc = limits.absolute_debt_limit }
-                if acc < (0 - limits.absolute_overtime_limit) { acc = 0 - limits.absolute_overtime_limit }
+                if acc > limits.absolute_debt_limit {
+                    acc = limits.absolute_debt_limit
+                }
+                if acc < (0 - limits.absolute_overtime_limit) {
+                    acc = 0 - limits.absolute_overtime_limit
+                }
                 acc
-            });
-
-        absolute_debt
+            })
     }
 
     fn current_date() -> NaiveDate {
         Local::today().naive_local()
-    }
-
-    fn currect_hour() -> u32 {
-        Local::now().naive_local().hour()
     }
 }
 
@@ -200,7 +206,5 @@ fn load_auth_data() -> Result<FitbitAuthData, Error> {
     let secret = env::var("FITBIT_CLIENT_SECRET")?;
     let token = FitbitToken::load(".fitbit_token").ok();
 
-    Ok(FitbitAuthData {
-       id, secret, token
-    })
+    Ok(FitbitAuthData { id, secret, token })
 }

@@ -1,6 +1,6 @@
 mod fitbit_grabber;
 
-pub use crate::fitbit_grabber::{FitbitActivityGrabber, FitbitAuthData, TokenStore, FitbitToken};
+pub use crate::fitbit_grabber::{FitbitActivityGrabber, FitbitAuthData, FitbitToken, TokenStore};
 use failure::Error;
 
 #[derive(Copy, Clone, Debug)]
@@ -33,9 +33,13 @@ pub struct SleepInterval {
 }
 
 pub trait ActivityGrabber {
-    fn fetch_daily_activity_stats(&self, date: chrono::NaiveDate) -> Result<DailyActivityStats, Error>;
-    fn fetch_hourly_activity(&self, date: chrono::NaiveDate) -> Result<Vec<HourlyActivityStats>, Error>;
+    fn fetch_daily_activity_stats(
+        &self,
+        date: chrono::NaiveDate,
+    ) -> Result<DailyActivityStats, Error>;
+    fn fetch_hourly_activity(
+        &self,
+        date: chrono::NaiveDate,
+    ) -> Result<Vec<HourlyActivityStats>, Error>;
     fn fetch_sleep_intervals(&self, date: chrono::NaiveDate) -> Result<Vec<SleepInterval>, Error>;
 }
-
-
