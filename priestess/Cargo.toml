@@ -6,8 +6,7 @@ edition = "2018"
 
 [dependencies]
 serde = { version = "1.0.84", features = ["derive"] }
-#fitbit = { git = "https://github.com/mersinvald/fitbit-grabber-rs.git", branch = "master" }
-fitbit = { path = "../../fitbit-grabber-rs" }
+fitbit = { git = "https://github.com/mersinvald/fitbit-grabber-rs.git", branch = "master" }
 failure = "0.1.4"
 log = "0.4.6"
 oauth2 = "1.3.0"
