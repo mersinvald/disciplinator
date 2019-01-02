@@ -1,0 +1,12 @@
+/target/
+**/*.rs.bk
+
+# Editors and IDEs
+.idea/
+
+# token file
+.fitbit_token
+.env
+
+Cargo.lock
+
