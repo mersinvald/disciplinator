@@ -3,4 +3,5 @@ members = [
     "priestess",
     "headmaster",
     "driver",
+    "driver/drivers/executor"
 ]

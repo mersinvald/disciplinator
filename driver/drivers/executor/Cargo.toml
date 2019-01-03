@@ -1,0 +1,15 @@
+[package]
+name = "executor"
+version = "0.1.0"
+authors = ["Mike Lubinets <public@mersinvald.me>"]
+edition = "2018"
+
+[dependencies]
+driver = { path = "../../" }
+structopt = "0.2.14"
+log = "0.4.6"
+failure = "0.1.5"
+toml = "0.4.10"
+serde = { version = "1.0.84", features = [ "derive" ] }
+env_logger = "0.6.0"
+itertools = "0.8.0"
