@@ -1,0 +1,7 @@
+triggers = [
+    "Normal",
+    "DebtCollection",
+    "DebtCollectionPaused",
+]
+
+enabled = true
