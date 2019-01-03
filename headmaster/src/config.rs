@@ -24,19 +24,19 @@ impl Config {
         // Check invariants
         Self::check_field_ranges(
             "limits.hourly_minimum_active_time",
-            config.limits.hourly_minimum_active_time,
+            config.limits.minimum_active_time,
             5,
             60,
         )?;
         Self::check_field_ranges(
             "limits.hourly_max_accounted_active_time",
-            config.limits.hourly_max_accounted_active_time,
+            config.limits.max_accounted_active_time,
             5,
             60,
         )?;
         Self::check_field_ranges(
             "limits.absolute_debt_limit",
-            config.limits.absolute_debt_limit,
+            config.limits.debt_limit,
             5,
             3600,
         )?;
@@ -84,9 +84,9 @@ pub struct Auth {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Limits {
-    pub hourly_minimum_active_time: u32,
-    pub hourly_max_accounted_active_time: u32,
-    pub absolute_debt_limit: u32,
+    pub minimum_active_time: u32,
+    pub max_accounted_active_time: u32,
+    pub debt_limit: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +95,8 @@ pub struct Day {
     pub day_begins_at: NaiveTime,
     /// used regardless of sleep data: there should be some time for leisure in the evening
     pub day_ends_at: NaiveTime,
+    /// day length, used if sleep data is available (in hours)
+    pub day_length: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -118,7 +118,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
                 // Failsafe to not to reach the DebtCollection state in case of error
                 .unwrap_or_else(|| {
                     error!("last hour info is not availible");
-                    self.config.limits.hourly_max_accounted_active_time
+                    self.config.limits.max_accounted_active_time
                 }),
         })
     }
@@ -137,7 +137,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
         // 1. debt > 0 and user haven't been active >= max hourly accounted time => DebtCollection
         // 2. debt > 0 and user can't log more time this hour due to the limit => DebtCollectionPaused
         // 3. no debt => Normal
-        let max_accounted = self.config.limits.hourly_max_accounted_active_time;
+        let max_accounted = self.config.limits.max_accounted_active_time;
         let state = if stat.debt > 0 && stat.active_minutes < max_accounted {
             State::DebtCollection(stat)
         } else if stat.debt > 0 && stat.active_minutes >= max_accounted {
@@ -172,6 +172,8 @@ impl<A: ActivityGrabber> Headmaster<A> {
         // Fetch the sleeping intervals from FitBit API
         let mut sleep_intervals = self.grabber.fetch_sleep_intervals(Self::current_date())?;
 
+        debug!("sleep intervals: {:#?}", sleep_intervals);
+
         // If no data there, fallback to config defined day start time
         if sleep_intervals.is_empty() {
             sleep_intervals.push(SleepInterval {
@@ -180,20 +182,31 @@ impl<A: ActivityGrabber> Headmaster<A> {
             })
         }
 
-        // Add the day end interval as well
+        // Calculate day end
+        let day_end = sleep_intervals.iter().fold(None, |day_end, interval| {
+            if day_end.is_none() {
+                Some(interval.end + chrono::Duration::hours(self.config.day.day_length))
+            } else {
+                day_end.map(|time| time + (interval.end - interval.start))
+            }
+        });
+
+        debug!("day ends at: {:?}", day_end);
+
+        // Add the day end interval as well,
         sleep_intervals.push(SleepInterval {
-            start: self.config.day.day_ends_at,
+            start: day_end.unwrap_or(self.config.day.day_ends_at),
             end: NaiveTime::from_hms(23, 59, 59),
         });
 
         hours.iter_mut().for_each(|h| {
             for interval in &sleep_intervals {
                 // Zero debt, zero overtime
-                let max_activity_during_sleep = self.config.limits.hourly_minimum_active_time;
+                let activity_during_sleep = self.config.limits.minimum_active_time;
                 if h.hour >= interval.start.hour() && h.hour < interval.end.hour() {
-                    h.active_minutes = max_activity_during_sleep;
+                    h.active_minutes = activity_during_sleep;
                 } else if h.hour == interval.end.hour() {
-                    h.active_minutes = u32::min(interval.end.minute(), max_activity_during_sleep);
+                    h.active_minutes = u32::min(interval.end.minute(), activity_during_sleep);
                 }
             }
         });
@@ -204,7 +217,8 @@ impl<A: ActivityGrabber> Headmaster<A> {
     fn normalize_by_threshold(&self, mut hours: Vec<Hour>) -> Vec<Hour> {
         hours.iter_mut().for_each(|h| {
             let limits = &self.config.limits;
-            h.active_minutes = u32::min(h.active_minutes, limits.hourly_max_accounted_active_time);
+            h.active_minutes = u32::min(h.active_minutes, limits.max_accounted_active_time);
+            h.debt = u32::min(h.debt, limits.debt_limit);
         });
 
         hours
@@ -215,14 +229,14 @@ impl<A: ActivityGrabber> Headmaster<A> {
 
         // Calculate first hour activity debt
         hours[0].debt = limits
-            .hourly_minimum_active_time
+            .minimum_active_time
             .checked_sub(hours[0].active_minutes)
             .unwrap_or(0);
 
         for i in 1..hours.len() {
             // Next hour debt is previous hour debt + current hour default debt
             let current_hour_minimum = if hours[i].complete {
-                limits.hourly_minimum_active_time
+                limits.minimum_active_time
             } else {
                 0
             };
@@ -237,10 +251,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
 
     fn calculate_debt(&self, hours: &[Hour]) -> u32 {
         let limits = &self.config.limits;
-        hours
-            .last()
-            .map(|h| u32::min(h.debt, limits.absolute_debt_limit))
-            .unwrap_or(0)
+        hours.last().map(|h| h.debt).unwrap_or(0)
     }
 
     fn current_date() -> NaiveDate {
