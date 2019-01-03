@@ -6,7 +6,7 @@ pub struct CurrentHourSummary {
     pub active_minutes: u32,
 }
 
-#[derive(Copy, Clone, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum State {
     Normal,
     DebtCollection(CurrentHourSummary),
