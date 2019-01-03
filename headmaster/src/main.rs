@@ -5,7 +5,7 @@ use priestess::{
 };
 use serde::{Deserialize, Serialize};
 
-use chrono::{Local, DateTime, NaiveDate, NaiveTime, Timelike};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, Timelike};
 
 mod config;
 use crate::config::Config;
@@ -86,7 +86,7 @@ impl StateCache {
     pub fn empty() -> Self {
         StateCache {
             state: None,
-            time: Local::now() - chrono::Duration::hours(1)
+            time: Local::now() - chrono::Duration::hours(1),
         }
     }
 
@@ -106,7 +106,11 @@ impl StateCache {
 
 impl<A: ActivityGrabber> Headmaster<A> {
     pub fn new(grabber: A, config: Config) -> Self {
-        Headmaster { config, grabber, cache: StateCache::empty() }
+        Headmaster {
+            config,
+            grabber,
+            cache: StateCache::empty(),
+        }
     }
 
     pub fn current_hour_summary(&self) -> Result<CurrentHourSummary, Error> {
@@ -137,7 +141,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
         // Query cache
         if let Some(state) = self.cache.get() {
             info!("less then a minute passed since last request, using the cached state");
-            return Ok(state)
+            return Ok(state);
         }
 
         // Get last stats from Fitbit
@@ -257,7 +261,6 @@ impl<A: ActivityGrabber> Headmaster<A> {
         Local::today().naive_local()
     }
 }
-
 
 fn load_auth_data(config: &Config) -> Result<FitbitAuthData, Error> {
     let id = config.auth.client_id.clone();
