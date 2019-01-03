@@ -11,6 +11,7 @@ pub struct Config {
     pub auth: Auth,
     pub limits: Limits,
     pub day: Day,
+    pub network: Network,
 }
 
 impl Config {
@@ -94,4 +95,9 @@ pub struct Day {
     pub day_begins_at: NaiveTime,
     /// used regardless of sleep data: there should be some time for leisure in the evening
     pub day_ends_at: NaiveTime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Network {
+    pub addr: String,
 }

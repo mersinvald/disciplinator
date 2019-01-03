@@ -5,15 +5,15 @@ use priestess::{
 };
 use serde::{Deserialize, Serialize};
 
-use std::env;
-
 use chrono::{Local, NaiveDate, NaiveTime, Timelike};
 
 mod config;
 use crate::config::Config;
 
+use tiny_http::{Response, Server};
+
 fn main() -> Result<(), Error> {
-    dotenv::dotenv()?;
+    env_logger::init();
 
     // Load config
     let config = Config::load("headmaster.toml")?;
@@ -26,11 +26,26 @@ fn main() -> Result<(), Error> {
     let token = grabber.get_token();
     token.save(".fitbit_token")?;
 
+    // Spin up the http server
+    let server = Server::http(&config.network.addr)
+        .map_err(|e| panic!("failed to startup the http server: {}", e))
+        .unwrap();
+
+    // Create a headmaster instance containing the main debt computation logic
     let master = Headmaster::new(grabber, config);
 
-    let debt = master.current_hour_summary()?;
-
-    println!("debt: {:?}", debt);
+    for request in server.incoming_requests() {
+        let state = master.current_state();
+        match state {
+            Ok(state) => request.respond(
+                Response::from_string(serde_json::to_string(&state)?).with_status_code(200),
+            )?,
+            Err(err) => request.respond(
+                Response::from_string(format!("failed to get status: {}", err))
+                    .with_status_code(503),
+            )?,
+        }
+    }
 
     Ok(())
 }
@@ -48,13 +63,14 @@ struct Hour {
     debt: u32,
 }
 
+#[derive(Copy, Clone, Serialize, Deserialize)]
 enum State {
     Normal,
     DebtCollection(CurrentHourSummary),
     DebtCollectionPaused(CurrentHourSummary),
 }
 
-#[derive(Copy, Clone, Debug, Serialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 struct CurrentHourSummary {
     debt: u32,
     active_minutes: u32,
@@ -102,7 +118,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
     }
 
     fn get_active_minutes_hourly(&self) -> Result<Vec<Hour>, Error> {
-        let mut data = self
+        let data = self
             .grabber
             .fetch_hourly_activity(Self::current_date())?
             .iter()

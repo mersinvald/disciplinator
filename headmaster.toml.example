@@ -10,3 +10,6 @@ absolute_debt_limit = 15
 [day]
 day_begins_at = "10:00:00"
 day_ends_at = "20:00:00"
+
+[network]
+addr = "127.0.0.1:8080"
