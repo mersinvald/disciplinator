@@ -38,7 +38,7 @@ struct Plugin {
 }
 
 fn discover_plugins<P: AsRef<Path>>(base_dir: P) -> Result<Vec<Plugin>, Error> {
-    use std::fs::{self, DirEntry};
+    use std::fs;
     use std::io::Read;
 
     #[derive(Deserialize)]
@@ -169,19 +169,6 @@ fn execute_plugin(plugin: &Path, state: State) -> Result<std::process::ExitStatu
 fn main() {
     let options = Options::from_args();
     env_logger::init();
-
-    let plugins = match discover_plugins(&options.plugins) {
-        Ok(plugins) => plugins,
-        Err(e) => {
-            error!("{}", e);
-            std::process::exit(1);
-        }
-    };
-
-    let mut plugins = plugins
-        .into_iter()
-        .map(|p| (p.trigger, p.path))
-        .into_group_map();
 
     let mut driver = Driver::new(&options.url, Duration::from_secs(options.period));
 
