@@ -1,16 +1,15 @@
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, Timelike};
 use failure::Error;
 use log::{debug, error, info};
+use tiny_http::{Response, Server};
+
+use headmaster::{CurrentHourSummary, State};
 use priestess::{
     ActivityGrabber, FitbitActivityGrabber, FitbitAuthData, FitbitToken, SleepInterval, TokenStore,
 };
-use serde::{Deserialize, Serialize};
-
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, Timelike};
 
 mod config;
 use crate::config::Config;
-
-use tiny_http::{Response, Server};
 
 fn main() -> Result<(), Error> {
     env_logger::init();
@@ -62,19 +61,6 @@ struct Hour {
     complete: bool,
     active_minutes: u32,
     debt: u32,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
-struct CurrentHourSummary {
-    debt: u32,
-    active_minutes: u32,
-}
-
-#[derive(Copy, Clone, Serialize, Deserialize)]
-enum State {
-    Normal,
-    DebtCollection(CurrentHourSummary),
-    DebtCollectionPaused(CurrentHourSummary),
 }
 
 struct StateCache {

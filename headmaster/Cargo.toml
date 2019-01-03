@@ -4,6 +4,14 @@ version = "0.1.0"
 authors = ["Mike Lubinets <public@mersinvald.me>"]
 edition = "2018"
 
+[[bin]]
+name = "headmaster-bin"
+path = "src/main.rs"
+
+[lib]
+name = "headmaster"
+path = "src/lib.rs"
+
 [dependencies]
 priestess = { path = "../priestess" }
 chrono = { version = "0.4.6", features = [ "serde" ] }
