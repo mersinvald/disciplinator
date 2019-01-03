@@ -5,7 +5,7 @@ use priestess::{
 };
 use serde::{Deserialize, Serialize};
 
-use chrono::{Local, NaiveDate, NaiveTime, Timelike};
+use chrono::{Local, DateTime, NaiveDate, NaiveTime, Timelike};
 
 mod config;
 use crate::config::Config;
@@ -32,7 +32,7 @@ fn main() -> Result<(), Error> {
         .unwrap();
 
     // Create a headmaster instance containing the main debt computation logic
-    let master = Headmaster::new(grabber, config);
+    let mut master = Headmaster::new(grabber, config);
 
     for request in server.incoming_requests() {
         let state = master.current_state();
@@ -53,6 +53,7 @@ fn main() -> Result<(), Error> {
 struct Headmaster<A> {
     config: Config,
     grabber: A,
+    cache: StateCache,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -63,6 +64,12 @@ struct Hour {
     debt: u32,
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+struct CurrentHourSummary {
+    debt: u32,
+    active_minutes: u32,
+}
+
 #[derive(Copy, Clone, Serialize, Deserialize)]
 enum State {
     Normal,
@@ -70,15 +77,36 @@ enum State {
     DebtCollectionPaused(CurrentHourSummary),
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
-struct CurrentHourSummary {
-    debt: u32,
-    active_minutes: u32,
+struct StateCache {
+    state: Option<State>,
+    time: DateTime<Local>,
+}
+
+impl StateCache {
+    pub fn empty() -> Self {
+        StateCache {
+            state: None,
+            time: Local::now() - chrono::Duration::hours(1)
+        }
+    }
+
+    pub fn set(&mut self, state: State) {
+        self.state = Some(state);
+        self.time = Local::now();
+    }
+
+    pub fn get(&self) -> Option<State> {
+        if Local::now().signed_duration_since(self.time) < chrono::Duration::minutes(1) {
+            self.state
+        } else {
+            None
+        }
+    }
 }
 
 impl<A: ActivityGrabber> Headmaster<A> {
     pub fn new(grabber: A, config: Config) -> Self {
-        Headmaster { config, grabber }
+        Headmaster { config, grabber, cache: StateCache::empty() }
     }
 
     pub fn current_hour_summary(&self) -> Result<CurrentHourSummary, Error> {
@@ -105,16 +133,33 @@ impl<A: ActivityGrabber> Headmaster<A> {
         })
     }
 
-    pub fn current_state(&self) -> Result<State, Error> {
-        let stat = self.current_hour_summary()?;
-        let max_accounted = self.config.limits.hourly_max_accounted_active_time;
-        if stat.debt > 0 && stat.active_minutes < max_accounted {
-            Ok(State::DebtCollection(stat))
-        } else if stat.debt > 0 && stat.active_minutes >= max_accounted {
-            Ok(State::DebtCollectionPaused(stat))
-        } else {
-            Ok(State::Normal)
+    pub fn current_state(&mut self) -> Result<State, Error> {
+        // Query cache
+        if let Some(state) = self.cache.get() {
+            info!("less then a minute passed since last request, using the cached state");
+            return Ok(state)
         }
+
+        // Get last stats from Fitbit
+        let stat = self.current_hour_summary()?;
+
+        // Calculate the correct system state:
+        // 1. debt > 0 and user haven't been active >= max hourly accounted time => DebtCollection
+        // 2. debt > 0 and user can't log more time this hour due to the limit => DebtCollectionPaused
+        // 3. no debt => Normal
+        let max_accounted = self.config.limits.hourly_max_accounted_active_time;
+        let state = if stat.debt > 0 && stat.active_minutes < max_accounted {
+            State::DebtCollection(stat)
+        } else if stat.debt > 0 && stat.active_minutes >= max_accounted {
+            State::DebtCollectionPaused(stat)
+        } else {
+            State::Normal
+        };
+
+        // Put the state into the cache
+        self.cache.set(state);
+
+        Ok(state)
     }
 
     fn get_active_minutes_hourly(&self) -> Result<Vec<Hour>, Error> {
@@ -212,6 +257,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
         Local::today().naive_local()
     }
 }
+
 
 fn load_auth_data(config: &Config) -> Result<FitbitAuthData, Error> {
     let id = config.auth.client_id.clone();
