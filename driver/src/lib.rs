@@ -37,6 +37,7 @@ pub struct Driver {
     url: String,
     period: Duration,
     callbacks: Vec<(CallbackTrigger, Callback)>,
+    prev_state: Option<State>,
 }
 
 impl Driver {
@@ -46,6 +47,7 @@ impl Driver {
             url,
             period,
             callbacks: vec![],
+            prev_state: None,
         }
     }
 
@@ -54,7 +56,7 @@ impl Driver {
         debug!("registered callback for {:?}", trigger);
     }
 
-    pub fn run(self) {
+    pub fn run(mut self) {
         loop {
             info!("starting update");
             match self.do_iteration() {
@@ -65,7 +67,9 @@ impl Driver {
         }
     }
 
-    fn do_iteration(&self) -> Result<(), Error> {
+    fn do_iteration(&mut self) -> Result<(), Error> {
+        use std::mem::discriminant;
+
         debug!("querying {}", self.url);
         let response = reqwest::get(&self.url)
             .map_err(|e| format_err!("failed to GET {}: {}", self.url, e))?;
@@ -73,6 +77,16 @@ impl Driver {
         let state = serde_json::from_reader(response)
             .map_err(|e| format_err!("failed to deserialize response: {}", e))?;
         info!("current state is {:?}", state);
+
+        if self
+            .prev_state
+            .map_or(false, |prev| discriminant(&prev) == discriminant(&state))
+        {
+            info!("state is the same, callbacks are not triggered");
+            return Ok(());
+        }
+
+        self.prev_state = Some(state);
 
         self.callbacks
             .iter()
