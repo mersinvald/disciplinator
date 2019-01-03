@@ -42,8 +42,9 @@ fn discover_plugins<P: AsRef<Path>>(base_dir: P) -> Result<Vec<Plugin>, Error> {
     use std::io::Read;
 
     #[derive(Deserialize)]
-    struct TriggerList {
+    struct Manifest {
         triggers: Vec<CallbackTrigger>,
+        enabled: bool,
     }
 
     let base_dir = base_dir.as_ref();
@@ -85,15 +86,15 @@ fn discover_plugins<P: AsRef<Path>>(base_dir: P) -> Result<Vec<Plugin>, Error> {
 
         // This block may throw errors, but we don't want to trow from the function
         // in-place lambda will catch 'em all!
-        let result = || -> Result<TriggerList, Error> {
+        let result = || -> Result<Manifest, Error> {
             let mut toml_file = fs::File::open(toml)?;
             let mut contents = String::new();
             toml_file.read_to_string(&mut contents)?;
             Ok(toml::from_str(&contents)?)
         }();
 
-        let trigger_list = match result {
-            Ok(trigger_list) => trigger_list,
+        let manifest = match result {
+            Ok(manifest) => manifest,
             Err(e) => {
                 warn!("failed to process plugin manifest at {}: {}", toml, e);
                 continue;
@@ -109,7 +110,13 @@ fn discover_plugins<P: AsRef<Path>>(base_dir: P) -> Result<Vec<Plugin>, Error> {
             continue;
         }
 
-        for trigger in trigger_list.triggers {
+        // Skip loading disabled plugins
+        if !manifest.enabled {
+            warn!("plugin {} is disabled, skipping", plugin);
+            continue;
+        }
+
+        for trigger in manifest.triggers {
             plugins.push(Plugin {
                 trigger,
                 path: PathBuf::from(plugin),
@@ -159,13 +166,6 @@ fn execute_plugin(plugin: &Path, state: State) -> Result<std::process::ExitStatu
     Ok(status)
 }
 
-fn register_callback(driver: &mut Driver, trigger: CallbackTrigger, plugins: Vec<PathBuf>) {
-    driver.add_callback(
-        trigger,
-        Box::new(move |state| execute_plugins(&plugins, state)),
-    );
-}
-
 fn main() {
     let options = Options::from_args();
     env_logger::init();
@@ -185,22 +185,31 @@ fn main() {
 
     let mut driver = Driver::new(&options.url, Duration::from_secs(options.period));
 
-    register_callback(
-        &mut driver,
+    let callback_factory = |event| {
+        let base_path = options.plugins.clone();
+        Box::new(move |state| -> Result<(), Error> {
+            // Load plugins that should be activated my the provided event
+            let plugins = discover_plugins(&base_path)?
+                .into_iter()
+                .filter(|p| p.trigger == event)
+                .map(|p| p.path)
+                .collect::<Vec<_>>();
+            execute_plugins(plugins.as_slice(), state);
+            Ok(())
+        })
+    };
+
+    driver.add_callback(
         CallbackTrigger::Normal,
-        plugins.remove(&CallbackTrigger::Normal).unwrap(),
+        callback_factory(CallbackTrigger::Normal),
     );
-    register_callback(
-        &mut driver,
+    driver.add_callback(
         CallbackTrigger::DebtCollection,
-        plugins.remove(&CallbackTrigger::DebtCollection).unwrap(),
+        callback_factory(CallbackTrigger::DebtCollection),
     );
-    register_callback(
-        &mut driver,
+    driver.add_callback(
         CallbackTrigger::DebtCollectionPaused,
-        plugins
-            .remove(&CallbackTrigger::DebtCollectionPaused)
-            .unwrap(),
+        callback_factory(CallbackTrigger::DebtCollectionPaused),
     );
 
     driver.run();

@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub use headmaster::{CurrentHourSummary, State};
 
-pub type Callback = Box<dyn Fn(State)>;
+pub type Callback = Box<dyn Fn(State) -> Result<(), Error>>;
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Serialize, Deserialize)]
 pub enum CallbackTrigger {
@@ -78,7 +78,11 @@ impl Driver {
             .iter()
             .filter(|(trigger, _)| trigger.is_triggered_for(&state))
             .inspect(|(trigger, _)| info!("triggering callback for event {:?}", trigger))
-            .for_each(|(_, callback)| callback(state));
+            .for_each(|(_, callback)| {
+                if let Err(e) = callback(state) {
+                    error!("callback failed: {}", e);
+                }
+            });
 
         Ok(())
     }
