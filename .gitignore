@@ -4,10 +4,14 @@
 # Editors and IDEs
 .idea/
 
+# Specific local launch scripts and items
+misc/
+**/log.txt
+
 # token file
-.fitbit_token
-.env
-headmaster.toml
+**/.fitbit_token
+**/.env
+**/headmaster.toml
 
 Cargo.lock
 
