@@ -143,7 +143,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
         } else if stat.debt > 0 && stat.active_minutes >= max_accounted {
             State::DebtCollectionPaused(stat)
         } else {
-            State::Normal
+            State::Normal(stat)
         };
 
         // Put the state into the cache

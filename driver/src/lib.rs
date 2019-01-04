@@ -18,7 +18,7 @@ impl CallbackTrigger {
     fn is_triggered_for(self, state: &State) -> bool {
         match self {
             CallbackTrigger::Normal => match state {
-                State::Normal => true,
+                State::Normal(..) => true,
                 _ => false,
             },
             CallbackTrigger::DebtCollection => match state {

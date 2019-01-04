@@ -8,7 +8,7 @@ pub struct CurrentHourSummary {
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
 pub enum State {
-    Normal,
+    Normal(CurrentHourSummary),
     DebtCollection(CurrentHourSummary),
     DebtCollectionPaused(CurrentHourSummary),
 }

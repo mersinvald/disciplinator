@@ -145,19 +145,16 @@ fn execute_plugins(plugins: &[PathBuf], state: State) {
 fn execute_plugin(plugin: &Path, state: State) -> Result<std::process::ExitStatus, Error> {
     use std::process::Command;
 
-    let (discriminant, active, debt) = match state {
-        State::Normal => ("Normal", "".into(), "".into()),
-        State::DebtCollection(stat) => (
-            "DebtCollection",
-            format!("{}", stat.active_minutes),
-            format!("{}", stat.debt),
-        ),
-        State::DebtCollectionPaused(stat) => (
-            "DebtCollectionPaused",
-            format!("{}", stat.active_minutes),
-            format!("{}", stat.debt),
-        ),
+    let (discriminant, stat) = match state {
+        State::Normal(stat) => ("Normal", stat),
+        State::DebtCollection(stat) => ("DebtCollection", stat),
+        State::DebtCollectionPaused(stat) => ("DebtCollectionPaused", stat),
     };
+
+    let (active, debt) = (
+        format!("{}", stat.active_minutes),
+        format!("{}", stat.debt),
+    );
 
     let status = Command::new(plugin)
         .args(&[discriminant, &active, &debt])
