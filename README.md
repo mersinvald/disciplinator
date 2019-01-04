@@ -4,6 +4,8 @@
 Disciplinator is a motivatory tool that utilizes Fitbit personal API. It is designed to help in breaking the sedentary 
 lifestyle through motivating the user to keep being active each hour (except for sleeping hours and some evening Pizza Time).
 
+#### [TODO] Setup
+
 #### How it works?
 
 `Disciplinator` has 3 main parts:
