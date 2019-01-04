@@ -78,10 +78,9 @@ impl Driver {
             .map_err(|e| format_err!("failed to deserialize response: {}", e))?;
         info!("current state is {:?}", state);
 
-        if self
-            .prev_state
-            .map_or(false, |prev| discriminant(&prev) == discriminant(&state))
-        {
+        if self.prev_state.map_or(false, |prev| {
+            discriminant(&prev) == discriminant(&state) && !state.is_debt_collection()
+        }) {
             info!("state is the same, callbacks are not triggered");
             return Ok(());
         }

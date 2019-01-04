@@ -12,3 +12,12 @@ pub enum State {
     DebtCollection(CurrentHourSummary),
     DebtCollectionPaused(CurrentHourSummary),
 }
+
+impl State {
+    pub fn is_debt_collection(self) -> bool {
+        match self {
+            State::DebtCollection(..) => true,
+            _ => false,
+        }
+    }
+}
