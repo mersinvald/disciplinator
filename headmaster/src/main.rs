@@ -208,7 +208,8 @@ impl<A: ActivityGrabber> Headmaster<A> {
                 if h.hour >= interval.start.hour() && h.hour < interval.end.hour() {
                     h.accounted_active_minutes = activity_during_sleep;
                 } else if h.hour == interval.end.hour() {
-                    h.accounted_active_minutes = u32::min(interval.end.minute(), activity_during_sleep);
+                    h.accounted_active_minutes =
+                        u32::min(interval.end.minute(), activity_during_sleep);
                 }
             }
         });
@@ -219,7 +220,8 @@ impl<A: ActivityGrabber> Headmaster<A> {
     fn normalize_by_threshold(&self, mut hours: Vec<Hour>) -> Vec<Hour> {
         hours.iter_mut().for_each(|h| {
             let limits = &self.config.limits;
-            h.accounted_active_minutes = u32::min(h.accounted_active_minutes, limits.max_accounted_active_time);
+            h.accounted_active_minutes =
+                u32::min(h.accounted_active_minutes, limits.max_accounted_active_time);
             h.debt = u32::min(h.debt, limits.debt_limit);
         });
 
