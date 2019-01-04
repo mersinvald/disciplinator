@@ -55,11 +55,12 @@ struct Headmaster<A> {
     cache: StateCache,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 struct Hour {
     hour: u32,
     complete: bool,
     active_minutes: u32,
+    accounted_active_minutes: u32,
     debt: u32,
 }
 
@@ -161,7 +162,8 @@ impl<A: ActivityGrabber> Headmaster<A> {
                 hour: h.hour,
                 complete: h.complete,
                 active_minutes: h.active_minutes,
-                debt: 0,
+                accounted_active_minutes: h.active_minutes,
+                ..Default::default()
             })
             .collect::<Vec<_>>();
 
@@ -204,9 +206,9 @@ impl<A: ActivityGrabber> Headmaster<A> {
                 // Zero debt, zero overtime
                 let activity_during_sleep = self.config.limits.minimum_active_time;
                 if h.hour >= interval.start.hour() && h.hour < interval.end.hour() {
-                    h.active_minutes = activity_during_sleep;
+                    h.accounted_active_minutes = activity_during_sleep;
                 } else if h.hour == interval.end.hour() {
-                    h.active_minutes = u32::min(interval.end.minute(), activity_during_sleep);
+                    h.accounted_active_minutes = u32::min(interval.end.minute(), activity_during_sleep);
                 }
             }
         });
@@ -217,7 +219,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
     fn normalize_by_threshold(&self, mut hours: Vec<Hour>) -> Vec<Hour> {
         hours.iter_mut().for_each(|h| {
             let limits = &self.config.limits;
-            h.active_minutes = u32::min(h.active_minutes, limits.max_accounted_active_time);
+            h.accounted_active_minutes = u32::min(h.accounted_active_minutes, limits.max_accounted_active_time);
             h.debt = u32::min(h.debt, limits.debt_limit);
         });
 
@@ -230,7 +232,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
         // Calculate first hour activity debt
         hours[0].debt = limits
             .minimum_active_time
-            .checked_sub(hours[0].active_minutes)
+            .checked_sub(hours[0].accounted_active_minutes)
             .unwrap_or(0);
 
         for i in 1..hours.len() {
@@ -242,7 +244,7 @@ impl<A: ActivityGrabber> Headmaster<A> {
             };
 
             hours[i].debt = (current_hour_minimum + hours[i - 1].debt)
-                .checked_sub(hours[i].active_minutes)
+                .checked_sub(hours[i].accounted_active_minutes)
                 .unwrap_or(0)
         }
 
