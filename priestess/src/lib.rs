@@ -5,16 +5,16 @@ use failure::Error;
 
 #[derive(Copy, Clone, Debug)]
 pub struct DailyActivityStats {
-    sedentary_minutes: u32,
-    active_minutes: u32,
-    detailed: Option<DetailedActivityStats>,
+    pub sedentary_minutes: u32,
+    pub active_minutes: u32,
+    pub detailed: Option<DetailedActivityStats>,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct DetailedActivityStats {
-    lightly_active: u32,
-    fairly_active: u32,
-    heavy_active: u32,
+    pub lightly_active: u32,
+    pub fairly_active: u32,
+    pub heavy_active: u32,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
