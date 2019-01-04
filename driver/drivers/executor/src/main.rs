@@ -151,10 +151,7 @@ fn execute_plugin(plugin: &Path, state: State) -> Result<std::process::ExitStatu
         State::DebtCollectionPaused(stat) => ("DebtCollectionPaused", stat),
     };
 
-    let (active, debt) = (
-        format!("{}", stat.active_minutes),
-        format!("{}", stat.debt),
-    );
+    let (active, debt) = (format!("{}", stat.active_minutes), format!("{}", stat.debt));
 
     let status = Command::new(plugin)
         .args(&[discriminant, &active, &debt])
