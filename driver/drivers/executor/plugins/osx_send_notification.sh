@@ -10,7 +10,7 @@ MESSAGE="Active Minutes: ${ACTIVE_MINUTES}; Debt: ${DEBT}"
 case ${EVENT} in
 "Normal")
     TITLE="No debt this time. Well done!"
-    MESSAGE="You've fullfiled your hourly norm.\nActive minutes: ${ACTIVE_MINUTES}"
+    MESSAGE="You've fulfilled your hourly norm.\nActive minutes: ${ACTIVE_MINUTES}"
 ;;
 "DebtCollection")
     TITLE="Hey! Go ahead and move your arse!"
