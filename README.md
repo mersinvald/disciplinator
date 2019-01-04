@@ -24,10 +24,10 @@ As the `driver` library is in principle indiscriminate in what one would do with
 external callbacks as long as they fall into the `Box<Fn(headmaster::State) -> Result<(), failure::Error>` interface, it's possible to
 define any actions to be triggered as events.
 
-This repository ships the `executor` binary in `driver/drivers/executor` which is a handy mediator between the `driver` lib and user-defined actions.
+This repository ships the `executor` binary in [driver/drivers/executor](driver/drivers/executor) which is a handy mediator between the `driver` lib and user-defined actions.
 Actions are represented as `Plugins`, which are just executable files with a manifest file attached to them. Plugins may be 
 implemented in any language, be it `bash`, `python`, `ruby`, or even `PowerShell` is one feels like it. Plugin may as well be 
-a binary file produced by `Rust`, `C` or any other compiler. Anything as long as it's executable.
+a binary file produced by `Rust`, `C` or any other language compiler. Anything as long as it's executable.
 
 The plugin Manifest defines on which events plugin should be ran, and if it's enabled.
 
@@ -47,4 +47,4 @@ which I'm [continuing to develop](https://github.com/mersinvald/fitbit-grabber-r
 
 #### Contacts
 
-Mike Lubinets: public@mersinvald.me
+Mike Lubinets: [public@mersinvald.me](mailto:public@mersinvald.me)
