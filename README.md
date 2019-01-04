@@ -16,6 +16,23 @@ lifestyle through motivating the user to keep being active each hour (except for
 
 Principles and unresolved questions are described in the [Rule Book](rulebook.md).
 
+##### Drivers
+
+As the `driver` library is in principle indiscriminate in what one would do with the received events, and can trigger any
+external callbacks as long as they fall into the `Box<Fn(headmaster::State) -> Result<(), failure::Error>` interface, it's possible to
+define any actions to be triggered as events.
+
+This repository ships the `executor` binary in `driver/drivers/executor` which is a handy mediator between the `driver` lib and user-defined actions.
+Actions are represented as `Plugins`, which are just executable files with a manifest file attached to them. Plugins may be 
+implemented in any language, be it `bash`, `python`, `ruby`, or even `PowerShell` is one feels like it. Plugin may as well be 
+a binary file produced by `Rust`, `C` or any other compiler. Anything as long as it's executable.
+
+The plugin Manifest defines on which events plugin should be ran, and if it's enabled.
+
+For a plugin sample please refer to the [osx_send_notification.sh](driver/drivers/executor/plugins/osx_send_notification.sh) bash script, 
+and it's manifest file [osx_send_notification.sh.toml](driver/drivers/executor/plugins/osx_send_notification.sh.toml);
+
+
 #### API Support
  
 Currently only Fitbit API is supported as an author is a proud owner of the Charge 2. Support of the other APIs is not planned
