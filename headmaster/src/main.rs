@@ -3,7 +3,7 @@ use failure::Error;
 use log::{debug, error, info};
 use tiny_http::{Response, Server};
 
-use headmaster::{CurrentHourSummary, State};
+use headmaster::{HourSummary, State, Summary};
 use priestess::{
     ActivityGrabber, FitbitActivityGrabber, FitbitAuthData, FitbitToken, SleepInterval, TokenStore,
 };
@@ -34,10 +34,10 @@ fn main() -> Result<(), Error> {
     let mut master = Headmaster::new(grabber, config);
 
     for request in server.incoming_requests() {
-        let state = master.current_state();
-        match state {
-            Ok(state) => request.respond(
-                Response::from_string(serde_json::to_string(&state)?).with_status_code(200),
+        let summary = master.current_summary();
+        match summary {
+            Ok(summary) => request.respond(
+                Response::from_string(serde_json::to_string(&summary)?).with_status_code(200),
             )?,
             Err(err) => request.respond(
                 Response::from_string(format!("failed to get status: {}", err))
@@ -52,7 +52,7 @@ fn main() -> Result<(), Error> {
 struct Headmaster<A> {
     config: Config,
     grabber: A,
-    cache: StateCache,
+    cache: SummaryCache,
 }
 
 #[derive(Debug, Default, Copy, Clone)]
@@ -61,30 +61,43 @@ struct Hour {
     complete: bool,
     active_minutes: u32,
     accounted_active_minutes: u32,
+    tracking_disabled: bool,
     debt: u32,
 }
 
-struct StateCache {
-    state: Option<State>,
+impl From<Hour> for HourSummary {
+    fn from(hour: Hour) -> HourSummary {
+        HourSummary {
+            hour: hour.hour,
+            debt: hour.debt,
+            active_minutes: hour.active_minutes,
+            tracking_disabled: hour.tracking_disabled,
+            complete: hour.complete,
+        }
+    }
+}
+
+struct SummaryCache {
+    summary: Option<Summary>,
     time: DateTime<Local>,
 }
 
-impl StateCache {
+impl SummaryCache {
     pub fn empty() -> Self {
-        StateCache {
-            state: None,
+        SummaryCache {
+            summary: None,
             time: Local::now() - chrono::Duration::hours(1),
         }
     }
 
-    pub fn set(&mut self, state: State) {
-        self.state = Some(state);
+    pub fn set(&mut self, summary: Summary) {
+        self.summary = Some(summary);
         self.time = Local::now();
     }
 
-    pub fn get(&self) -> Option<State> {
+    pub fn get(&self) -> Option<Summary> {
         if Local::now().signed_duration_since(self.time) < chrono::Duration::minutes(1) {
-            self.state
+            self.summary.clone()
         } else {
             None
         }
@@ -96,11 +109,11 @@ impl<A: ActivityGrabber> Headmaster<A> {
         Headmaster {
             config,
             grabber,
-            cache: StateCache::empty(),
+            cache: SummaryCache::empty(),
         }
     }
 
-    pub fn current_hour_summary(&self) -> Result<CurrentHourSummary, Error> {
+    pub fn current_hour_and_day_log(&self) -> Result<(HourSummary, Vec<HourSummary>), Error> {
         let hours = self.get_active_minutes_hourly()?;
         debug!("ABSOLUTE DEBT: \n{:#?}", hours);
         let hours = self.exclude_inactive_hours(hours)?;
@@ -111,46 +124,58 @@ impl<A: ActivityGrabber> Headmaster<A> {
         info!("HOURLY DEBT CALCULATION: \n{:#?}", hours);
         let debt = self.calculate_debt(&hours);
         info!("CURRENT DEBT: {}", debt);
-        Ok(CurrentHourSummary {
+
+        let last_hour = hours.last().cloned().unwrap_or_else(|| {
+            error!("last hour info is not available");
+            Hour {
+                complete: true,
+                tracking_disabled: true,
+                ..Default::default()
+            }
+        });
+
+        let current_hour_summary = HourSummary {
+            hour: last_hour.hour,
             debt,
-            active_minutes: hours
-                .last()
-                .map(|h| h.active_minutes)
-                // Failsafe to not to reach the DebtCollection state in case of error
-                .unwrap_or_else(|| {
-                    error!("last hour info is not availible");
-                    self.config.limits.max_accounted_active_time
-                }),
-        })
+            complete: last_hour.complete,
+            tracking_disabled: last_hour.tracking_disabled,
+            active_minutes: last_hour.active_minutes,
+        };
+
+        let day_log = hours.into_iter().map(HourSummary::from).collect();
+
+        Ok((current_hour_summary, day_log))
     }
 
-    pub fn current_state(&mut self) -> Result<State, Error> {
+    pub fn current_summary(&mut self) -> Result<Summary, Error> {
         // Query cache
-        if let Some(state) = self.cache.get() {
-            info!("less then a minute passed since last request, using the cached state");
-            return Ok(state);
+        if let Some(summary) = self.cache.get() {
+            info!("less then a minute passed since last request, using the cached summary");
+            return Ok(summary);
         }
 
         // Get last stats from Fitbit
-        let stat = self.current_hour_summary()?;
+        let (hour, day_log) = self.current_hour_and_day_log()?;
 
         // Calculate the correct system state:
         // 1. debt > 0 and user haven't been active >= max hourly accounted time => DebtCollection
         // 2. debt > 0 and user can't log more time this hour due to the limit => DebtCollectionPaused
         // 3. no debt => Normal
         let max_accounted = self.config.limits.max_accounted_active_time;
-        let state = if stat.debt > 0 && stat.active_minutes < max_accounted {
-            State::DebtCollection(stat)
-        } else if stat.debt > 0 && stat.active_minutes >= max_accounted {
-            State::DebtCollectionPaused(stat)
+        let state = if hour.debt > 0 && hour.active_minutes < max_accounted {
+            State::DebtCollection(hour)
+        } else if hour.debt > 0 && hour.active_minutes >= max_accounted {
+            State::DebtCollectionPaused(hour)
         } else {
-            State::Normal(stat)
+            State::Normal(hour)
         };
 
-        // Put the state into the cache
-        self.cache.set(state);
+        let summary = Summary { state, day_log };
 
-        Ok(state)
+        // Put the summary into the cache
+        self.cache.set(summary.clone());
+
+        Ok(summary)
     }
 
     fn get_active_minutes_hourly(&self) -> Result<Vec<Hour>, Error> {
@@ -207,9 +232,13 @@ impl<A: ActivityGrabber> Headmaster<A> {
                 let activity_during_sleep = self.config.limits.minimum_active_time;
                 if h.hour >= interval.start.hour() && h.hour < interval.end.hour() {
                     h.accounted_active_minutes = activity_during_sleep;
+                    h.tracking_disabled = true;
                 } else if h.hour == interval.end.hour() {
                     h.accounted_active_minutes =
                         u32::min(interval.end.minute(), activity_during_sleep);
+                    if h.accounted_active_minutes == activity_during_sleep {
+                        h.tracking_disabled = true;
+                    }
                 }
             }
         });
@@ -254,7 +283,6 @@ impl<A: ActivityGrabber> Headmaster<A> {
     }
 
     fn calculate_debt(&self, hours: &[Hour]) -> u32 {
-        let limits = &self.config.limits;
         hours.last().map(|h| h.debt).unwrap_or(0)
     }
 

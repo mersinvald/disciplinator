@@ -3,7 +3,7 @@ use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub use headmaster::{CurrentHourSummary, State};
+pub use headmaster::{HourSummary, State, Summary};
 
 pub type Callback = Box<dyn Fn(State) -> Result<(), Error>>;
 
@@ -74,8 +74,9 @@ impl Driver {
         let response = reqwest::get(&self.url)
             .map_err(|e| format_err!("failed to GET {}: {}", self.url, e))?;
 
-        let state = serde_json::from_reader(response)
+        let summary: Summary = serde_json::from_reader(response)
             .map_err(|e| format_err!("failed to deserialize response: {}", e))?;
+        let state = summary.state;
         info!("current state is {:?}", state);
 
         if self.prev_state.map_or(false, |prev| {

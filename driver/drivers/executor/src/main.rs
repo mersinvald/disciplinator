@@ -1,9 +1,7 @@
 use driver::{CallbackTrigger, Driver, State};
 use failure::{format_err, Error};
-use itertools::Itertools;
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use structopt::StructOpt;
