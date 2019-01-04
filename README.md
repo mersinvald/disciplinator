@@ -40,6 +40,11 @@ and it's manifest file [osx_send_notification.sh.toml](driver/drivers/executor/p
 Currently only Fitbit API is supported as an author is a proud owner of the Charge 2. Support of the other APIs is not planned
 until author decides to switch to another fitness wearables manufacturer.
 
+#### Miscellaneous
+
+There's an [Android Application](https://github.com/mersinvald/disciplinator-android-app) for receiving push-notifications from the respective Executor plugin and Disciplinarian data rendering.
+Implemented mostly for convenience of debugging and to play with Android (who can live without a pinch of mobile development these days), but turned out to be pretty useful.
+
 #### Acknowledgements
 
 Huge thanks to [@bradfordboyle](https://github.com/bradfordboyle) for his [fitbit-grabber-rs](https://github.com/bradfordboyle/fitbit-grabber-rs) crate, 
