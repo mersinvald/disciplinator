@@ -1,7 +1,7 @@
 use chrono::{DateTime, Local, NaiveDate, NaiveTime, Timelike};
 use failure::Error;
 use log::{debug, error, info};
-use tiny_http::{Response, Server};
+use tiny_http::{Method, Request, Response, Server};
 
 use headmaster::{HourSummary, State, Summary};
 use priestess::{
@@ -45,15 +45,7 @@ fn main() -> Result<(), Error> {
     let options = Options::from_args();
 
     // Load config
-    let config = Config::load(options.config_path)?;
-
-    // Connect to Fitbit API
-    let auth_data = load_auth_data(&config, &options.token_path)?;
-    let grabber = FitbitActivityGrabber::new(&auth_data)?;
-
-    // Save refreshed token
-    let token = grabber.get_token();
-    token.save(&options.token_path)?;
+    let config = Config::load(&options.config_path)?;
 
     // Spin up the http server
     let server = Server::http(&config.network.addr)
@@ -61,27 +53,46 @@ fn main() -> Result<(), Error> {
         .unwrap();
 
     // Create a headmaster instance containing the main debt computation logic
-    let mut master = Headmaster::new(grabber, config);
+    let mut master = Headmaster::new(config, options.clone());
 
-    for request in server.incoming_requests() {
-        let summary = master.current_summary();
-        match summary {
-            Ok(summary) => request.respond(
-                Response::from_string(serde_json::to_string(&summary)?).with_status_code(200),
-            )?,
-            Err(err) => request.respond(
-                Response::from_string(format!("failed to get status: {}", err))
-                    .with_status_code(503),
-            )?,
+    for mut request in server.incoming_requests() {
+        let mut serve = |request: &mut Request| -> Result<_, Error> {
+            // Token update procedure
+            if request.url().ends_with("update_token") && *request.method() == Method::Post {
+                let token: FitbitToken = serde_json::from_reader(request.as_reader())?;
+                token.save(&options.token_path)?;
+                Ok(Response::from_string("Token updated").with_status_code(200))
+            } else if *request.method() == Method::Get {
+                let summary = master.current_summary()?;
+                Ok(Response::from_string(serde_json::to_string(&summary)?).with_status_code(200))
+            } else {
+                Ok(Response::from_string("Not found").with_status_code(404))
+            }
+        };
+
+        let serving_result = match serve(&mut request) {
+            Ok(response) => request.respond(response),
+            Err(err) => {
+                error!("request handling errored: {}", err);
+                request.respond(
+                    Response::from_string(format!("failed to serve request: {}", err))
+                        .with_status_code(500),
+                )
+            }
+        };
+
+        if let Err(err) = serving_result {
+            error!("failed to serve (503): {}", err);
         }
     }
 
     Ok(())
 }
 
-struct Headmaster<A> {
+struct Headmaster {
+    options: Options,
     config: Config,
-    grabber: A,
+    grabber: Option<FitbitActivityGrabber>,
     cache: SummaryCache,
 }
 
@@ -134,16 +145,32 @@ impl SummaryCache {
     }
 }
 
-impl<A: ActivityGrabber> Headmaster<A> {
-    pub fn new(grabber: A, config: Config) -> Self {
+static NOT_LOGGED_IN_PANIC_MSG: &str =
+    "FitbitGrabber not logged into FirBit API. Login should be performed before any request.";
+
+impl Headmaster {
+    pub fn new(config: Config, options: Options) -> Self {
         Headmaster {
             config,
-            grabber,
+            options,
+            grabber: None,
             cache: SummaryCache::empty(),
         }
     }
 
-    pub fn current_hour_and_day_log(&self) -> Result<(HourSummary, Vec<HourSummary>), Error> {
+    fn login(&mut self) -> Result<(), Error> {
+        let auth_data = load_auth_data(&self.config, &self.options.token_path)?;
+        let grabber = FitbitActivityGrabber::new(&auth_data)?;
+        let token = grabber.get_token();
+        token.save(&self.options.token_path)?;
+        self.grabber = Some(grabber);
+        Ok(())
+    }
+
+    pub fn current_hour_and_day_log(&mut self) -> Result<(HourSummary, Vec<HourSummary>), Error> {
+        info!("logging into FitBit API");
+        self.login()?;
+        info!("logged in succesfully");
         let hours = self.get_active_minutes_hourly()?;
         debug!("ABSOLUTE DEBT: \n{:#?}", hours);
         let hours = self.exclude_inactive_hours(hours)?;
@@ -211,6 +238,8 @@ impl<A: ActivityGrabber> Headmaster<A> {
     fn get_active_minutes_hourly(&self) -> Result<Vec<Hour>, Error> {
         let data = self
             .grabber
+            .as_ref()
+            .expect(NOT_LOGGED_IN_PANIC_MSG)
             .fetch_hourly_activity(Self::current_date())?
             .iter()
             .map(|h| Hour {
@@ -227,7 +256,11 @@ impl<A: ActivityGrabber> Headmaster<A> {
 
     fn exclude_inactive_hours(&self, mut hours: Vec<Hour>) -> Result<Vec<Hour>, Error> {
         // Fetch the sleeping intervals from FitBit API
-        let mut sleep_intervals = self.grabber.fetch_sleep_intervals(Self::current_date())?;
+        let mut sleep_intervals = self
+            .grabber
+            .as_ref()
+            .expect(NOT_LOGGED_IN_PANIC_MSG)
+            .fetch_sleep_intervals(Self::current_date())?;
 
         debug!("sleep intervals: {:#?}", sleep_intervals);
 

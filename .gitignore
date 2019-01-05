@@ -12,6 +12,7 @@ misc/
 **/.fitbit_token
 **/.env
 **/headmaster.toml
+**/headmaster-release.toml
 
 Cargo.lock
 

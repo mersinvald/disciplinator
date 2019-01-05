@@ -13,4 +13,4 @@ day_ends_at = "20:00:00"
 day_length = 12
 
 [network]
-addr = "127.0.0.1:8080"
+addr = "127.0.0.1:8081"
