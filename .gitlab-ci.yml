@@ -1,6 +1,7 @@
 stages:
   - build
   - push
+  - deploy
 
 before_script:
   - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
@@ -12,7 +13,7 @@ image build:
   script:
     - sed s/YOUR_CLIENT_ID/$CLIENT_ID/ headmaster/headmaster.toml.example > headmaster.toml
     - sed -i s/YOUR_CLIENT_SECRET/$CLIENT_SECRET/ headmaster.toml
-    - echo $TOKEN > .fitbit_token
+    - echo $TOKEN > fitbit_token
     - docker build -t $CI_REGISTRY_IMAGE:latest -f Dockerfile ./
 
 image push:
@@ -21,3 +22,12 @@ image push:
     - master
   script:
     - docker push $CI_REGISTRY_IMAGE:latest
+
+image peploy:
+  stage: deploy
+  only:
+    - master
+  tags:
+    - cd
+  script:
+      ansible-playbook /etc/ansible/playbooks/deploy.yml -l web --tags disciplinator

@@ -62,6 +62,8 @@ fn main() -> Result<(), Error> {
                 let token: FitbitToken = serde_json::from_reader(request.as_reader())?;
                 token.save(&options.token_path)?;
                 Ok(Response::from_string("Token updated").with_status_code(200))
+            } else if request.url().ends_with("health") && *request.method() == Method::Get {
+                Ok(Response::from_string("Running").with_status_code(200))
             } else if *request.method() == Method::Get {
                 let summary = master.current_summary()?;
                 Ok(Response::from_string(serde_json::to_string(&summary)?).with_status_code(200))
@@ -357,7 +359,9 @@ impl Headmaster {
 fn load_auth_data(config: &Config, token_path: &Path) -> Result<FitbitAuthData, Error> {
     let id = config.auth.client_id.clone();
     let secret = config.auth.client_secret.clone();
-    let token = FitbitToken::load(token_path).ok();
+    let token = FitbitToken::load(token_path)
+        .map_err(|e| "failed to read FitBit token: {}, e")
+        .ok();
 
     Ok(FitbitAuthData { id, secret, token })
 }
