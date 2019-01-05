@@ -10,12 +10,33 @@ use priestess::{
 
 mod config;
 use crate::config::Config;
+use std::path::PathBuf;
+use structopt::StructOpt;
+
+#[derive(Clone, Debug, StructOpt)]
+#[structopt(
+    name = "headmaster",
+    about = "Disciplinator server-side FitBit API mediator"
+)]
+struct Options {
+    /// Plugins directory path, default = "./plugins"
+    #[structopt(
+        short = "c",
+        long = "config",
+        default_value = "./headmaster.toml",
+        parse(from_os_str)
+    )]
+    pub config_path: PathBuf,
+}
 
 fn main() -> Result<(), Error> {
     env_logger::init();
 
+    // Load args
+    let options = Options::from_args();
+
     // Load config
-    let config = Config::load("headmaster.toml")?;
+    let config = Config::load(options.config_path)?;
 
     // Connect to Fitbit API
     let auth_data = load_auth_data(&config)?;
