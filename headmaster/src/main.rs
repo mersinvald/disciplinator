@@ -10,7 +10,7 @@ use priestess::{
 
 mod config;
 use crate::config::Config;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
 #[derive(Clone, Debug, StructOpt)]
@@ -19,7 +19,7 @@ use structopt::StructOpt;
     about = "Disciplinator server-side FitBit API mediator"
 )]
 struct Options {
-    /// Plugins directory path, default = "./plugins"
+    /// Config path
     #[structopt(
         short = "c",
         long = "config",
@@ -27,6 +27,15 @@ struct Options {
         parse(from_os_str)
     )]
     pub config_path: PathBuf,
+
+    /// Token path
+    #[structopt(
+        short = "t",
+        long = "token",
+        default_value = "./.fitbit_token",
+        parse(from_os_str)
+    )]
+    pub token_path: PathBuf,
 }
 
 fn main() -> Result<(), Error> {
@@ -39,12 +48,12 @@ fn main() -> Result<(), Error> {
     let config = Config::load(options.config_path)?;
 
     // Connect to Fitbit API
-    let auth_data = load_auth_data(&config)?;
+    let auth_data = load_auth_data(&config, &options.token_path)?;
     let grabber = FitbitActivityGrabber::new(&auth_data)?;
 
     // Save refreshed token
     let token = grabber.get_token();
-    token.save(".fitbit_token")?;
+    token.save(&options.token_path)?;
 
     // Spin up the http server
     let server = Server::http(&config.network.addr)
@@ -312,10 +321,10 @@ impl<A: ActivityGrabber> Headmaster<A> {
     }
 }
 
-fn load_auth_data(config: &Config) -> Result<FitbitAuthData, Error> {
+fn load_auth_data(config: &Config, token_path: &Path) -> Result<FitbitAuthData, Error> {
     let id = config.auth.client_id.clone();
     let secret = config.auth.client_secret.clone();
-    let token = FitbitToken::load(".fitbit_token").ok();
+    let token = FitbitToken::load(token_path).ok();
 
     Ok(FitbitAuthData { id, secret, token })
 }
