@@ -9,6 +9,7 @@ image build:
   stage: build
   only:
     - master
+    - ci
   script:
     - sed s/YOUR_CLIENT_ID/$CLIENT_ID/ headmaster/headmaster.toml.example > headmaster.toml
     - sed -i s/YOUR_CLIENT_SECRET/$CLIENT_SECRET/ headmaster.toml
@@ -19,6 +20,7 @@ image push:
   stage: push
   only:
     - master
+    - ci
   script:
     - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG
     - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_TAG $CI_REGISTRY_IMAGE:latest
