@@ -14,7 +14,7 @@ image build:
     - sed s/YOUR_CLIENT_ID/$CLIENT_ID/ headmaster/headmaster.toml.example > headmaster.toml
     - sed -i s/YOUR_CLIENT_SECRET/$CLIENT_SECRET/ headmaster.toml
     - echo $TOKEN > fitbit_token
-    - docker build -t $CI_REGISTRY_IMAGE:latest -f Dockerfile ./
+    - docker build --no-cache -t $CI_REGISTRY_IMAGE:latest -f Dockerfile ./
 
 image push:
   stage: push
