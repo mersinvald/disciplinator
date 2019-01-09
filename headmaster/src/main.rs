@@ -276,11 +276,20 @@ impl Headmaster {
 
         // Calculate day end
         let day_end = sleep_intervals.iter().fold(None, |day_end, interval| {
-            if day_end.is_none() {
+            let end = if day_end.is_none() {
                 Some(interval.end + chrono::Duration::hours(self.config.day.day_length))
             } else {
                 day_end.map(|time| time + (interval.end - interval.start))
-            }
+            };
+
+            // Check that we're not overflowing the 24-h boundary
+            end.map(|e| {
+                if e < interval.end {
+                    NaiveTime::from_hms(23, 59, 59)
+                } else {
+                    e
+                }
+            })
         });
 
         debug!("day ends at: {:?}", day_end);
