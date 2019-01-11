@@ -3,7 +3,7 @@ use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub use headmaster::{HourSummary, State, Summary};
+pub use headmaster::proto::{HourSummary, State, Summary};
 
 pub type Callback = Box<dyn Fn(State) -> Result<(), Error>>;
 

@@ -1,7 +1,7 @@
 mod fitbit_grabber;
 
-pub use crate::fitbit_grabber::{FitbitActivityGrabber, FitbitAuthData, FitbitToken, TokenStore};
-use failure::Error;
+pub use crate::fitbit_grabber::{FitbitActivityGrabber, FitbitAuthData, FitbitToken, TokenJson};
+use failure::{Fail, Error};
 
 #[derive(Copy, Clone, Debug)]
 pub struct DailyActivityStats {
@@ -32,7 +32,11 @@ pub struct SleepInterval {
     pub end: chrono::NaiveTime,
 }
 
-pub trait ActivityGrabber {
+pub trait ActivityGrabber: Sized {
+    type AuthData;
+    type Token;
+    fn new(auth: &Self::AuthData) -> Result<Self, Error>;
+    fn get_token(&self) -> &Self::Token;
     fn fetch_daily_activity_stats(
         &self,
         date: chrono::NaiveDate,
@@ -42,4 +46,10 @@ pub trait ActivityGrabber {
         date: chrono::NaiveDate,
     ) -> Result<Vec<HourlyActivityStats>, Error>;
     fn fetch_sleep_intervals(&self, date: chrono::NaiveDate) -> Result<Vec<SleepInterval>, Error>;
+}
+
+#[derive(Debug, Copy, Clone, Fail)]
+pub enum ActivityGrabberError {
+    #[fail(display = "need a new token")]
+    NeedNewToken,
 }

@@ -1,5 +1,5 @@
 use crate::{
-    ActivityGrabber, DailyActivityStats, DetailedActivityStats, HourlyActivityStats, SleepInterval,
+    ActivityGrabber, ActivityGrabberError, DailyActivityStats, DetailedActivityStats, HourlyActivityStats, SleepInterval,
 };
 
 use fitbit::activities::Activities;
@@ -28,48 +28,6 @@ pub struct FitbitAuthData {
     pub token: Option<FitbitToken>,
 }
 
-impl FitbitActivityGrabber {
-    /// Attempt to authenticate with Firbit API. This method has 2 modes:
-    /// - First auth: authenticate via OAuth2, this will open the browser in order to authenticate.
-    /// - Token exists in FitbitAuthData::token: refresh the token, reopen the existing session, no user input is required
-    ///   will operate as if it was the first auth attempt.
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new(adata: &FitbitAuthData) -> Result<Self, Error> {
-        // Reopen session
-        if let Some(token) = adata.token.as_ref() {
-            info!("trying to authenticate with token");
-            let auth = FitbitAuth::new(&adata.id, &adata.secret);
-            // Refresh token to ensure one provided is valid
-            if let Ok(token) = auth
-                .exchange_refresh_token(token.clone())
-                .map_err(|e| error!("{}", e))
-            {
-                info!("refresh token exchanged");
-                // Convert to Fitbit Token
-                let token = FitbitToken::from(token);
-                // This does not send any requests, so any fail is not an auth fail
-                return Ok(FitbitActivityGrabber {
-                    client: FitbitClient::new(&token)?,
-                    token,
-                });
-            }
-        }
-
-        info!("authenticating via OAuth2");
-
-        // First time auth
-        let auth = FitbitAuth::new(&adata.id, &adata.secret);
-        let token = FitbitToken::from(auth.get_token()?);
-        let client = FitbitClient::new(&token)?;
-        Ok(FitbitActivityGrabber { client, token })
-    }
-
-    /// Return auth token
-    pub fn get_token(&self) -> &FitbitToken {
-        &self.token
-    }
-}
-
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct FitbitActivity {
@@ -83,6 +41,43 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 impl ActivityGrabber for FitbitActivityGrabber {
+    type AuthData = FitbitAuthData;
+    type Token = FitbitToken;
+
+    /// Attempt to authenticate with Firbit API. This method has 2 modes:
+    /// - First auth: authenticate via OAuth2, this will open the browser in order to authenticate.
+    /// - Token exists in FitbitAuthData::token: refresh the token, reopen the existing session, no user input is required
+    ///   will operate as if it was the first auth attempt.
+    #[allow(clippy::new_ret_no_self)]
+    fn new(adata: &Self::AuthData) -> Result<Self, Error> {
+        // Reopen session
+        if let Some(token) = adata.token.as_ref() {
+            info!("trying to authenticate with token");
+            let auth = FitbitAuth::new(&adata.id, &adata.secret);
+            // Refresh token to ensure one provided is valid
+            if let Ok(token) = auth
+                .exchange_refresh_token(token.clone())
+                .map_err(|e| error!("{}", e))
+                {
+                    info!("refresh token exchanged");
+                    // Convert to Fitbit Token
+                    let token = FitbitToken::from(token);
+                    // This does not send any requests, so any fail is not an auth fail
+                    return Ok(FitbitActivityGrabber {
+                        client: FitbitClient::new(&token)?,
+                        token,
+                    });
+                }
+        }
+
+        Err(ActivityGrabberError::NeedNewToken.into())
+    }
+
+    /// Return auth token
+    fn get_token(&self) -> &Self::Token {
+        &self.token
+    }
+
     fn fetch_daily_activity_stats(&self, date: NaiveDate) -> Result<DailyActivityStats, Error> {
         #[derive(Deserialize)]
         struct Root {
@@ -237,20 +232,17 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
-pub trait TokenStore: Sized {
-    fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), Error>;
-    fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error>;
+pub trait TokenJson: Sized {
+    fn to_json(&self) -> String;
+    fn from_json(json: &str) -> Result<Self, Error>;
 }
 
-impl TokenStore for FitbitToken {
-    fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
-        let json = serde_json::to_string(&self).unwrap();
-        File::create(&path).and_then(|mut file| file.write_all(json.as_bytes()))?;
-        Ok(())
+impl TokenJson for FitbitToken {
+    fn to_json(&self) -> String {
+        serde_json::to_string(&self).unwrap()
     }
 
-    fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
-        let f = File::open(path)?;
-        Ok(serde_json::from_reader(f)?)
+    fn from_json(json: &str) -> Result<Self, Error> {
+        Ok(serde_json::from_str(json)?)
     }
 }
