@@ -62,15 +62,6 @@ use crate::master;
 
 use crate::db::models::User;
 
-macro_rules! try_or_respond {
-    ($req:expr) => {
-        match $req {
-            Ok(id) => id,
-            Err(err) => return Box::new(future::ok(ServiceError::from(err).error_response()))
-        }
-    }
-}
-
 type HttpResult = Result<HttpResponse, ServiceError>;
 
 fn create_response<D, E>(result: Result<D, E>) -> HttpResponse
