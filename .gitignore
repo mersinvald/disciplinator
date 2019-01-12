@@ -13,8 +13,10 @@ misc/
 **/.env
 **/headmaster.toml
 **/headmaster-release.toml
+**/headmaster-old.toml
 
 Cargo.lock
 
 /driver/drivers/executor/plugins/onesignal_send_notification.sh
 /driver/drivers/executor/plugins/onesignal_send_notification.sh.toml
+
