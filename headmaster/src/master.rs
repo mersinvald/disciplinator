@@ -1,32 +1,94 @@
-use priestess::{FitbitActivityGrabber, FitbitAuthData, ActivityGrabber, SleepInterval};
+use priestess::{FitbitActivityGrabber, FitbitAuthData, ActivityGrabber, SleepInterval, ActivityGrabberError};
 use chrono::NaiveDateTime;
 use chrono::{NaiveTime, NaiveDate, Timelike};
 use failure::Error;
 use log::{info, debug, error};
+use std::marker::PhantomData;
 
 use crate::proto::activity::{Summary, HourSummary, State};
 
+use actix_web::actix::{Message, Actor, SyncContext, Handler};
+
+pub struct HeadmasterExecutor;
+
+impl Actor for HeadmasterExecutor {
+    type Context = SyncContext<Self>;
+}
+
+pub struct GetSummary<G: ActivityGrabber> {
+    config: HeadmasterConfig,
+    auth: G::AuthData,
+}
+
+impl<G: ActivityGrabber> GetSummary<G> {
+    pub fn new(config: HeadmasterConfig, auth: G::AuthData) -> Self {
+        GetSummary {
+            config,
+            auth,
+        }
+    }
+}
+
+impl<G: ActivityGrabber> Message for GetSummary<G>
+    where G::Token: 'static
+{
+    type Result = Result<(Summary, G::Token), Error>;
+}
+
+impl<G: ActivityGrabber> Handler<GetSummary<G>> for HeadmasterExecutor
+    where G::Token: 'static
+{
+    type Result = Result<(Summary, G::Token), Error>;
+
+    fn handle(&mut self, msg: GetSummary<G>, _: &mut Self::Context) -> Self::Result {
+        let headmaster = Headmaster::new(msg.config, msg.auth);
+        let worker = headmaster.login()?;
+        // WTF RUST CAN'T INFER FUCKING TYPE WITH
+        // worker.get_token().clone()
+        let token = <HeadmasterWorker<G>>::get_token(&worker).clone();
+        let summary = worker.current_summary()?;
+        Ok((summary, token))
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct HeadmasterConfig {
-    pub minimum_active_time: u32,
-    pub max_accounted_active_minutes: u32,
-    pub debt_limit: u32,
+    pub minimum_active_time: i32,
+    pub max_accounted_active_minutes: i32,
+    pub debt_limit: i32,
     pub day_begins_at: NaiveTime,
     pub day_ends_at: NaiveTime,
-    pub day_length: u32,
+    pub day_length: i32,
     pub user_date_time: NaiveDateTime,
 }
 
 pub struct Headmaster<G: ActivityGrabber> {
     auth: G::AuthData,
     config: HeadmasterConfig,
-    grabber: G,
 }
 
 impl<G: ActivityGrabber> Headmaster<G> {
-    pub fn login(&mut self) -> Result<HeadmasterWorker<G>, Error> {
+    pub fn new(config: HeadmasterConfig, auth: G::AuthData) -> Self {
+        Headmaster {
+            auth,
+            config,
+        }
+    }
+
+    pub fn login(self) -> Result<HeadmasterWorker<G>, Error> {
         info!("logging into FitBit API");
-        let grabber = G::new(&self.auth)?;
+        let grabber = G::new(&self.auth)
+            // Convert NewNewToken error into TokenExpired error, so it would be handled correctly by webserver
+            .map_err(|e| {
+                match e.downcast::<ActivityGrabberError>() {
+                    Ok(age) => match age {
+                        ActivityGrabberError::NeedNewToken => crate::proto::Error::TokenExpired.into(),
+                        err => err.into()
+                    },
+                    Err(err) => err,
+                }
+            })?;
+
         Ok(HeadmasterWorker {
             config: self.config,
             grabber,
@@ -42,9 +104,12 @@ pub struct HeadmasterWorker<G: ActivityGrabber> {
 static NOT_LOGGED_IN_PANIC_MSG: &str =
     "FitbitGrabber not logged into FirBit API. Login should be performed before any request.";
 
-impl<G: ActivityGrabber> Headmaster<G> {
-    pub fn current_hour_and_day_log(&mut self) -> Result<(HourSummary, Vec<HourSummary>), Error> {
-        self.login()?;
+impl<G: ActivityGrabber> HeadmasterWorker<G> {
+    pub fn get_token(&self) -> &G::Token {
+        self.grabber.get_token()
+    }
+
+    pub fn current_hour_and_day_log(&self) -> Result<(HourSummary, Vec<HourSummary>), Error> {
         info!("logged in succesfully");
         let hours = self.get_active_minutes_hourly()?;
         debug!("ABSOLUTE DEBT: \n{:#?}", hours);
@@ -69,7 +134,7 @@ impl<G: ActivityGrabber> Headmaster<G> {
         Ok((last_hour, hours))
     }
 
-    pub fn current_summary(&mut self) -> Result<Summary, Error> {
+    pub fn current_summary(&self) -> Result<Summary, Error> {
         // Get last stats from Fitbit
         let (hour, day_log) = self.current_hour_and_day_log()?;
 
@@ -154,12 +219,12 @@ impl<G: ActivityGrabber> Headmaster<G> {
             for interval in &sleep_intervals {
                 // Zero debt, zero overtime
                 let activity_during_sleep = self.config.minimum_active_time;
-                if h.hour >= interval.start.hour() && h.hour < interval.end.hour() {
+                if h.hour >= interval.start.hour() as i32 && h.hour < interval.end.hour() as i32 {
                     h.accounted_active_minutes = activity_during_sleep;
                     h.tracking_disabled = true;
-                } else if h.hour == interval.end.hour() {
+                } else if h.hour == interval.end.hour() as i32 {
                     h.accounted_active_minutes =
-                        u32::min(interval.end.minute(), activity_during_sleep);
+                        i32::min(interval.end.minute() as i32, activity_during_sleep);
                     if h.accounted_active_minutes == activity_during_sleep {
                         h.tracking_disabled = true;
                     }
@@ -173,8 +238,8 @@ impl<G: ActivityGrabber> Headmaster<G> {
     fn normalize_by_threshold(&self, mut hours: Vec<HourSummary>) -> Vec<HourSummary> {
         hours.iter_mut().for_each(|h| {
             h.accounted_active_minutes =
-                u32::min(h.accounted_active_minutes, self.config.max_accounted_active_minutes);
-            h.debt = u32::min(h.debt, self.config.debt_limit);
+                i32::min(h.accounted_active_minutes, self.config.max_accounted_active_minutes);
+            h.debt = i32::min(h.debt, self.config.debt_limit);
         });
 
         hours
@@ -203,7 +268,7 @@ impl<G: ActivityGrabber> Headmaster<G> {
         hours
     }
 
-    fn calculate_debt(&self, hours: &[HourSummary]) -> u32 {
+    fn calculate_debt(&self, hours: &[HourSummary]) -> i32 {
         hours.last().map(|h| h.debt).unwrap_or(0)
     }
 

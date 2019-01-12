@@ -25,16 +25,16 @@ pub struct FitbitActivityGrabber {
 pub struct FitbitAuthData {
     pub id: String,
     pub secret: String,
-    pub token: Option<FitbitToken>,
+    pub token: FitbitToken,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct FitbitActivity {
-    sedentary_minutes: u32,
-    lightly_active_minutes: u32,
-    fairly_active_minutes: u32,
-    very_active_minutes: u32,
+    sedentary_minutes: i32,
+    lightly_active_minutes: i32,
+    fairly_active_minutes: i32,
+    very_active_minutes: i32,
 }
 
 use serde_json::Value;
@@ -51,23 +51,21 @@ impl ActivityGrabber for FitbitActivityGrabber {
     #[allow(clippy::new_ret_no_self)]
     fn new(adata: &Self::AuthData) -> Result<Self, Error> {
         // Reopen session
-        if let Some(token) = adata.token.as_ref() {
-            info!("trying to authenticate with token");
-            let auth = FitbitAuth::new(&adata.id, &adata.secret);
-            // Refresh token to ensure one provided is valid
-            if let Ok(token) = auth
-                .exchange_refresh_token(token.clone())
-                .map_err(|e| error!("{}", e))
-                {
-                    info!("refresh token exchanged");
-                    // Convert to Fitbit Token
-                    let token = FitbitToken::from(token);
-                    // This does not send any requests, so any fail is not an auth fail
-                    return Ok(FitbitActivityGrabber {
-                        client: FitbitClient::new(&token)?,
-                        token,
-                    });
-                }
+        info!("trying to authenticate with token");
+        let auth = FitbitAuth::new(&adata.id, &adata.secret);
+        // Refresh token to ensure one provided is valid
+        if let Ok(token) = auth
+            .exchange_refresh_token(adata.token.clone())
+            .map_err(|e| error!("{}", e))
+        {
+            info!("refresh token exchanged");
+            // Convert to Fitbit Token
+            let token = FitbitToken::from(token);
+            // This does not send any requests, so any fail is not an auth fail
+            return Ok(FitbitActivityGrabber {
+                client: FitbitClient::new(&token)?,
+                token,
+            });
         }
 
         Err(ActivityGrabberError::NeedNewToken.into())
@@ -122,7 +120,7 @@ impl ActivityGrabber for FitbitActivityGrabber {
             let stat = hourly_stats
                 .entry(value.time.hour())
                 .or_insert(HourlyActivityStats {
-                    hour: value.time.hour(),
+                    hour: value.time.hour() as i32,
                     ..HourlyActivityStats::default()
                 });
 

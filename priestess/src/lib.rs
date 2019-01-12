@@ -5,24 +5,24 @@ use failure::{Fail, Error};
 
 #[derive(Copy, Clone, Debug)]
 pub struct DailyActivityStats {
-    pub sedentary_minutes: u32,
-    pub active_minutes: u32,
+    pub sedentary_minutes: i32,
+    pub active_minutes: i32,
     pub detailed: Option<DetailedActivityStats>,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct DetailedActivityStats {
-    pub lightly_active: u32,
-    pub fairly_active: u32,
-    pub heavy_active: u32,
+    pub lightly_active: i32,
+    pub fairly_active: i32,
+    pub heavy_active: i32,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct HourlyActivityStats {
-    pub hour: u32,
+    pub hour: i32,
     pub complete: bool,
-    pub sedentary_minutes: u32,
-    pub active_minutes: u32,
+    pub sedentary_minutes: i32,
+    pub active_minutes: i32,
     pub detailed: Option<DetailedActivityStats>,
 }
 
@@ -34,7 +34,7 @@ pub struct SleepInterval {
 
 pub trait ActivityGrabber: Sized {
     type AuthData;
-    type Token;
+    type Token: Clone + Sized;
     fn new(auth: &Self::AuthData) -> Result<Self, Error>;
     fn get_token(&self) -> &Self::Token;
     fn fetch_daily_activity_stats(

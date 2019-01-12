@@ -21,6 +21,18 @@ table! {
 }
 
 table! {
+    settings (user_id) {
+        user_id -> Int8,
+        hourly_activity_goal -> Int4,
+        day_starts_at -> Time,
+        day_ends_at -> Time,
+        day_length -> Nullable<Int4>,
+        hourly_debt_limit -> Nullable<Int4>,
+        hourly_activity_limit -> Nullable<Int4>,
+    }
+}
+
+table! {
     tokens (token) {
         token -> Uuid,
         user_id -> Int8,
@@ -40,6 +52,7 @@ table! {
 allow_tables_to_appear_in_same_query!(
     config,
     fitbit,
+    settings,
     tokens,
     users,
 );

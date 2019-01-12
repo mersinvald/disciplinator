@@ -1,6 +1,6 @@
 use crate::db::schema::*;
 use diesel::{Queryable, Insertable};
-use serde::{Serialize, Deserialize};
+use serde::{Serialize, Deserialize, Deserializer};
 use chrono::NaiveTime;
 use uuid::Uuid;
 
@@ -32,10 +32,9 @@ pub struct UpdateUser {
 }
 
 #[derive(Queryable, Insertable, Serialize, Deserialize)]
-#[table_name = "config"]
-pub struct Config {
+#[table_name = "settings"]
+pub struct Settings {
     pub user_id: i64,
-    pub version: i32,
     pub hourly_activity_goal: i32,
     pub day_starts_at: NaiveTime,
     pub day_ends_at: NaiveTime,
@@ -44,14 +43,17 @@ pub struct Config {
     pub hourly_activity_limit: Option<i32>,
 }
 
-#[derive(AsChangeset, Debug, Default)]
-#[table_name = "config"]
-struct UpdateConfig {
+#[derive(AsChangeset, Debug, Default, Serialize, Deserialize)]
+#[table_name = "settings"]
+pub struct UpdateSettings {
     pub hourly_activity_goal: Option<i32>,
     pub day_starts_at: Option<NaiveTime>,
     pub day_ends_at: Option<NaiveTime>,
+    #[serde(default, deserialize_with = "some_option")]
     pub day_length: Option<Option<i32>>,
+    #[serde(default, deserialize_with = "some_option")]
     pub hourly_debt_limit: Option<Option<i32>>,
+    #[serde(default, deserialize_with = "some_option")]
     pub hourly_activity_limit: Option<Option<i32>>,
 }
 
@@ -65,11 +67,12 @@ pub struct FitbitCredentials {
     pub client_token: Option<String>,
 }
 
-#[derive(AsChangeset, Debug, Default)]
+#[derive(AsChangeset, Debug, Default, Serialize, Deserialize)]
 #[table_name = "fitbit"]
-struct UpdateFitbitCredentials {
+pub struct UpdateFitbitCredentials {
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
+    #[serde(default, deserialize_with = "some_option")]
     pub client_token: Option<Option<String>>,
 }
 
@@ -78,4 +81,11 @@ struct UpdateFitbitCredentials {
 pub struct Token {
     pub token: Uuid,
     pub user_id: i64,
+}
+
+fn some_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+    where T: Deserialize<'de>,
+          D: Deserializer<'de>
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }

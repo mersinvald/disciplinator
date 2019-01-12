@@ -82,7 +82,14 @@ fn main() -> Result<(), Error> {
         move || DbExecutor(pool.clone())
     );
 
-    let server = webserver::start(config, db_addr)
+    // Create Actix SyncArbiter for Headmaster
+    let headmaster = SyncArbiter::start(
+        // TODO: separate config entity
+        config.database.pool_size as usize,
+        move || master::HeadmasterExecutor
+    );
+
+    let server = webserver::start(config, db_addr, headmaster)
         .expect("webserver failed");
 
     sys.run();

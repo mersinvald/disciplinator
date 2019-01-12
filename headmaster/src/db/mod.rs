@@ -1,7 +1,7 @@
 pub mod schema;
 pub mod models;
 
-use self::models::{User, NewUser, Token};
+use self::models::{User, NewUser, Token, Settings, FitbitCredentials, UpdateFitbitCredentials};
 
 use diesel::prelude::*;
 use diesel::associations::*;
@@ -184,7 +184,6 @@ impl Handler<GetUser> for DbExecutor {
     }
 }
 
-
 pub struct UpdateUser {
     token: Uuid,
     changeset: models::UpdateUser,
@@ -228,4 +227,251 @@ impl Handler<UpdateUser> for DbExecutor {
     }
 }
 
+
+pub struct UpdateSettings {
+    token: Uuid,
+    changeset: models::UpdateSettings,
+}
+
+impl UpdateSettings {
+    pub fn new(token: Uuid, update: models::UpdateSettings) -> Self {
+        UpdateSettings {
+            token,
+            changeset: update
+        }
+    }
+}
+
+pub struct GetSettings(pub Uuid);
+
+impl Message for GetSettings {
+    type Result = Result<Settings, Error>;
+}
+
+impl Handler<GetSettings> for DbExecutor {
+    type Result = Result<Settings, Error>;
+
+    fn handle(&mut self, msg: GetSettings, c: &mut Self::Context) -> Self::Result {
+        use self::schema::settings::dsl::*;
+
+        let target_user = self.handle(GetUser(msg.0), c)?;
+
+        let conn = self.0.get()?;
+
+        let mut s = settings
+            .filter(user_id.eq(target_user.id))
+            .load::<Settings>(&conn)?;
+
+        if s.len() == 0 {
+            let keys = [
+                "hourly_activity_goal",
+                "day_starts_at",
+                "dat_ends_at"
+            ];
+            Err(ServiceError::MissingConfig { keys: keys.iter().map(|s| s.to_string()).collect() }.into())
+        } else {
+            Ok(s.remove(0))
+        }
+    }
+}
+
+impl Message for UpdateSettings {
+    type Result = Result<Settings, Error>;
+}
+
+impl Handler<UpdateSettings> for DbExecutor {
+    type Result = Result<Settings, Error>;
+
+    fn handle(&mut self, msg: UpdateSettings, c: &mut Self::Context) -> Self::Result {
+        use self::schema::settings::dsl::*;
+
+        let target_user = self.handle(GetUser(msg.token), c)?;
+
+        let conn = self.0.get()?;
+
+        // Check if settings are null at the moment
+        let first_update = settings
+            .filter(user_id.eq(target_user.id))
+            .count()
+            .first::<i64>(&conn)? == 0;
+
+        debug!("first settings update");
+
+        // If so -- check that all NOT NULL fields are present in the update
+        if first_update {
+            let all_present = msg.changeset.hourly_activity_goal.is_some()
+                && msg.changeset.day_starts_at.is_some()
+                && msg.changeset.day_ends_at.is_some();
+            // If not -- return error with missing keys list
+            if !all_present {
+                let mut keys = vec![];
+                if msg.changeset.hourly_activity_goal.is_none() { keys.push("hourly_activity_goal".into()) }
+                if msg.changeset.day_starts_at.is_none() { keys.push("day_starts_at".into()) }
+                if msg.changeset.day_ends_at.is_none() { keys.push("dat_ends_at".into()) }
+                return Err(ServiceError::MissingConfig { keys }.into());
+            }
+        }
+
+        let mut transaction_error = ServiceError::Internal {
+            error: "uninitialized result".into(),
+            backtrace: "".into()
+        };
+
+        // Perform the update in transaction
+        let result = conn.transaction::<_, diesel::result::Error, _>(|| {
+            let updated = if first_update {
+                diesel::insert_into(settings)
+                    // Options should be cleared by that moment if that's first update
+                    .values(&Settings {
+                        user_id: target_user.id,
+                        hourly_activity_goal: msg.changeset.hourly_activity_goal.unwrap(),
+                        day_starts_at: msg.changeset.day_starts_at.unwrap(),
+                        day_ends_at: msg.changeset.day_ends_at.unwrap(),
+                        day_length: msg.changeset.day_length.unwrap_or(None),
+                        hourly_debt_limit: msg.changeset.hourly_debt_limit.unwrap_or(None),
+                        hourly_activity_limit: msg.changeset.hourly_activity_limit.unwrap_or(None),
+                    })
+                    .get_result(&conn)?
+            } else {
+                diesel::update(settings)
+                    .filter(user_id.eq(target_user.id))
+                    .set(msg.changeset)
+                    .get_result::<Settings>(&conn)?
+            };
+
+            // Validate settings before approving the transaction
+            if updated.hourly_activity_goal <= 0 || updated.hourly_activity_goal > 60 {
+                transaction_error = ServiceError::InvalidSetting {
+                    key: "hourly_activity_goal".into(),
+                    hint: "0 < value <= 60".into()
+                };
+
+                return Err(diesel::result::Error::RollbackTransaction);
+            }
+
+            if updated.day_starts_at > updated.day_ends_at {
+                transaction_error = ServiceError::InvalidSetting {
+                    key: "day_starts_at | day_ends_at".into(),
+                    hint: "day should start before it ends".into(),
+                };
+
+                return Err(diesel::result::Error::RollbackTransaction);
+            }
+
+            Ok(updated)
+        });
+
+        result.map_err(|e| match e {
+            // If rollback happened, we should have some meaningful error there
+            diesel::result::Error::RollbackTransaction => transaction_error.into(),
+            other_diesel_error => other_diesel_error.into(),
+        })
+    }
+}
+
+
+pub struct GetSettingsFitbit(pub Uuid);
+
+impl Message for GetSettingsFitbit {
+    type Result = Result<FitbitCredentials, Error>;
+}
+
+impl Handler<GetSettingsFitbit> for DbExecutor {
+    type Result = Result<FitbitCredentials, Error>;
+
+    fn handle(&mut self, msg: GetSettingsFitbit, c: &mut Self::Context) -> Self::Result {
+        use self::schema::fitbit::dsl::*;
+
+        let target_user = self.handle(GetUser(msg.0), c)?;
+
+        let conn = self.0.get()?;
+
+        let mut s = fitbit
+            .filter(user_id.eq(target_user.id))
+            .load::<FitbitCredentials>(&conn)?;
+
+        if s.len() == 0 {
+            let keys = [
+                "client_id",
+                "client_secret",
+            ];
+            Err(ServiceError::MissingConfig { keys: keys.iter().map(|s| s.to_string()).collect() }.into())
+        } else {
+            Ok(s.remove(0))
+        }
+    }
+}
+
+pub struct UpdateSettingsFitbit {
+    token: Uuid,
+    changeset: models::UpdateFitbitCredentials,
+}
+
+impl UpdateSettingsFitbit {
+    pub fn new(token: Uuid, mut update: models::UpdateFitbitCredentials) -> Self {
+        // Make sure to overwrite Token with NULL if credentials are changed
+        if update.client_token.is_none() && (update.client_id.is_some() || update.client_secret.is_some()) {
+            update.client_token = Some(None)
+        };
+
+        UpdateSettingsFitbit {
+            token,
+            changeset: update
+        }
+    }
+}
+
+impl Message for UpdateSettingsFitbit {
+    type Result = Result<FitbitCredentials, Error>;
+}
+
+impl Handler<UpdateSettingsFitbit> for DbExecutor {
+    type Result = Result<FitbitCredentials, Error>;
+
+    fn handle(&mut self, msg: UpdateSettingsFitbit, c: &mut Self::Context) -> Self::Result {
+        use self::schema::fitbit::dsl::*;
+
+        let target_user = self.handle(GetUser(msg.token), c)?;
+
+        let conn = self.0.get()?;
+
+        // Check if settings are null at the moment
+        let first_update = fitbit
+            .filter(user_id.eq(target_user.id))
+            .count()
+            .first::<i64>(&conn)? == 0;
+
+        // If so -- check that all NOT NULL fields are present in the update
+        if first_update {
+            let all_present = msg.changeset.client_id.is_some()
+                && msg.changeset.client_secret.is_some();
+            // If not -- return error with missing keys list
+            if !all_present {
+                let mut keys = vec![];
+                if msg.changeset.client_id.is_none() { keys.push("client_id".into()) }
+                if msg.changeset.client_secret.is_none() { keys.push("client_secret".into()) }
+                return Err(ServiceError::MissingConfig { keys }.into());
+            }
+        }
+
+        // Perform the update
+        let updated = if first_update {
+            diesel::insert_into(fitbit)
+                .values(FitbitCredentials {
+                    user_id: target_user.id,
+                    client_id: msg.changeset.client_id.unwrap(),
+                    client_secret: msg.changeset.client_secret.unwrap(),
+                    client_token: msg.changeset.client_token.unwrap_or(None),
+                })
+                .get_result(&conn)?
+        } else {
+            diesel::update(fitbit)
+                .filter(user_id.eq(target_user.id))
+                .set(msg.changeset)
+                .get_result(&conn)?
+        };
+
+        Ok(updated)
+    }
+}
 

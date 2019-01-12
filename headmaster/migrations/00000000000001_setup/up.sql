@@ -10,10 +10,9 @@ CREATE TABLE IF NOT EXISTS users
     PRIMARY KEY(ID)
 );
 
-CREATE TABLE IF NOT EXISTS config
+CREATE TABLE IF NOT EXISTS settings
 (
     user_id BIGINT NOT NULL,
-    version INTEGER NOT NULL,
     hourly_activity_goal INTEGER NOT NULL,
     day_starts_at TIME NOT NULL,
     day_ends_at TIME NOT NULL,

@@ -57,7 +57,7 @@ pub enum Error {
     CredentialsConflict { key: String, value: String },
     #[fail(display = "email {:?} is not verified", email)]
     EmailNotVerified { email: String },
-    #[fail(display = "value of setting {:?} is invalid: {}", key, hint)]
+    #[fail(display = "value of setting {:?} is invalid. hint: {}", key, hint)]
     InvalidSetting { key: String, hint: String },
     #[fail(display = "user with provided username:password not found")]
     UserNotFound,
@@ -105,7 +105,7 @@ impl ResponseError for Error {
         match self {
             CredentialsConflict { .. } => HttpResponse::Conflict().json(response),
             EmailNotVerified { .. } => HttpResponse::Forbidden().json(response),
-            InvalidSetting { .. } => HttpResponse::BadRequest().json(response),
+            InvalidSetting { .. } => HttpResponse::Forbidden().json(response),
             UserNotFound => HttpResponse::Unauthorized().json(response),
             MissingConfig { .. } => HttpResponse::Forbidden().json(response),
             TokenExpired => HttpResponse::Unauthorized().json(response),
