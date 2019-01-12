@@ -155,7 +155,8 @@ impl Handler<LoginUser> for DbExecutor {
     }
 }
 
-pub struct GetUser(pub Uuid);
+
+pub struct GetUser(pub i64);
 
 impl Message for GetUser {
     type Result = Result<User, Error>;
@@ -165,6 +166,30 @@ impl Handler<GetUser> for DbExecutor {
     type Result = Result<User, Error>;
 
     fn handle(&mut self, msg: GetUser, _: &mut Self::Context) -> Self::Result {
+        use self::schema::users::dsl::*;
+
+        let conn = self.0.get()?;
+
+        let fetched = users
+            .filter(id.eq(msg.0))
+            .first::<User>(&conn)
+            .map_err(|_| ServiceError::UserNotFound)?;
+
+        Ok(fetched)
+    }
+}
+
+
+pub struct GetUserByToken(pub Uuid);
+
+impl Message for GetUserByToken {
+    type Result = Result<User, Error>;
+}
+
+impl Handler<GetUserByToken> for DbExecutor {
+    type Result = Result<User, Error>;
+
+    fn handle(&mut self, msg: GetUserByToken, _: &mut Self::Context) -> Self::Result {
         use self::schema::tokens::dsl::*;
         use self::schema::users::dsl::*;
 
@@ -185,15 +210,15 @@ impl Handler<GetUser> for DbExecutor {
 }
 
 pub struct UpdateUser {
-    token: Uuid,
+    user_id: i64,
     changeset: models::UpdateUser,
 }
 
 impl UpdateUser {
-    pub fn new(token: Uuid, update: proto_http::UpdateUser) -> Self {
+    pub fn new(user_id: i64, update: proto_http::UpdateUser) -> Self {
         let email_verified = update.email.as_ref().map(|_| true);
         UpdateUser {
-            token,
+            user_id,
             changeset: models::UpdateUser {
                 username: update.username,
                 email: update.email,
@@ -214,12 +239,10 @@ impl Handler<UpdateUser> for DbExecutor {
     fn handle(&mut self, msg: UpdateUser, c: &mut Self::Context) -> Self::Result {
         use self::schema::users::dsl::*;
 
-        let target_user = self.handle(GetUser(msg.token), c)?;
-
         let conn = self.0.get()?;
 
         let updated_user = diesel::update(users)
-            .filter(id.eq(target_user.id))
+            .filter(id.eq(msg.user_id))
             .set(msg.changeset)
             .get_result(&conn)?;
 
@@ -227,22 +250,7 @@ impl Handler<UpdateUser> for DbExecutor {
     }
 }
 
-
-pub struct UpdateSettings {
-    token: Uuid,
-    changeset: models::UpdateSettings,
-}
-
-impl UpdateSettings {
-    pub fn new(token: Uuid, update: models::UpdateSettings) -> Self {
-        UpdateSettings {
-            token,
-            changeset: update
-        }
-    }
-}
-
-pub struct GetSettings(pub Uuid);
+pub struct GetSettings(pub i64);
 
 impl Message for GetSettings {
     type Result = Result<Settings, Error>;
@@ -254,12 +262,10 @@ impl Handler<GetSettings> for DbExecutor {
     fn handle(&mut self, msg: GetSettings, c: &mut Self::Context) -> Self::Result {
         use self::schema::settings::dsl::*;
 
-        let target_user = self.handle(GetUser(msg.0), c)?;
-
         let conn = self.0.get()?;
 
         let mut s = settings
-            .filter(user_id.eq(target_user.id))
+            .filter(user_id.eq(msg.0))
             .load::<Settings>(&conn)?;
 
         if s.len() == 0 {
@@ -275,6 +281,21 @@ impl Handler<GetSettings> for DbExecutor {
     }
 }
 
+pub struct UpdateSettings {
+    user_id: i64,
+    changeset: models::UpdateSettings,
+}
+
+impl UpdateSettings {
+    pub fn new(user_id: i64, update: models::UpdateSettings) -> Self {
+        UpdateSettings {
+            user_id,
+            changeset: update
+        }
+    }
+}
+
+
 impl Message for UpdateSettings {
     type Result = Result<Settings, Error>;
 }
@@ -285,13 +306,11 @@ impl Handler<UpdateSettings> for DbExecutor {
     fn handle(&mut self, msg: UpdateSettings, c: &mut Self::Context) -> Self::Result {
         use self::schema::settings::dsl::*;
 
-        let target_user = self.handle(GetUser(msg.token), c)?;
-
         let conn = self.0.get()?;
 
         // Check if settings are null at the moment
         let first_update = settings
-            .filter(user_id.eq(target_user.id))
+            .filter(user_id.eq(msg.user_id))
             .count()
             .first::<i64>(&conn)? == 0;
 
@@ -323,7 +342,7 @@ impl Handler<UpdateSettings> for DbExecutor {
                 diesel::insert_into(settings)
                     // Options should be cleared by that moment if that's first update
                     .values(&Settings {
-                        user_id: target_user.id,
+                        user_id: msg.user_id,
                         hourly_activity_goal: msg.changeset.hourly_activity_goal.unwrap(),
                         day_starts_at: msg.changeset.day_starts_at.unwrap(),
                         day_ends_at: msg.changeset.day_ends_at.unwrap(),
@@ -334,7 +353,7 @@ impl Handler<UpdateSettings> for DbExecutor {
                     .get_result(&conn)?
             } else {
                 diesel::update(settings)
-                    .filter(user_id.eq(target_user.id))
+                    .filter(user_id.eq(msg.user_id))
                     .set(msg.changeset)
                     .get_result::<Settings>(&conn)?
             };
@@ -370,7 +389,7 @@ impl Handler<UpdateSettings> for DbExecutor {
 }
 
 
-pub struct GetSettingsFitbit(pub Uuid);
+pub struct GetSettingsFitbit(pub i64);
 
 impl Message for GetSettingsFitbit {
     type Result = Result<FitbitCredentials, Error>;
@@ -382,12 +401,10 @@ impl Handler<GetSettingsFitbit> for DbExecutor {
     fn handle(&mut self, msg: GetSettingsFitbit, c: &mut Self::Context) -> Self::Result {
         use self::schema::fitbit::dsl::*;
 
-        let target_user = self.handle(GetUser(msg.0), c)?;
-
         let conn = self.0.get()?;
 
         let mut s = fitbit
-            .filter(user_id.eq(target_user.id))
+            .filter(user_id.eq(msg.0))
             .load::<FitbitCredentials>(&conn)?;
 
         if s.len() == 0 {
@@ -403,12 +420,12 @@ impl Handler<GetSettingsFitbit> for DbExecutor {
 }
 
 pub struct UpdateSettingsFitbit {
-    token: Uuid,
+    user_id: i64,
     changeset: models::UpdateFitbitCredentials,
 }
 
 impl UpdateSettingsFitbit {
-    pub fn new(token: Uuid, mut update: models::UpdateFitbitCredentials) -> Self {
+    pub fn new(user_id: i64, mut update: models::UpdateFitbitCredentials) -> Self {
         // Make sure to overwrite Token with NULL if credentials are changed
         if update.client_token.is_none() && (update.client_id.is_some() || update.client_secret.is_some()) {
             debug!("fitbit credentials updated: nulling the token");
@@ -416,7 +433,7 @@ impl UpdateSettingsFitbit {
         };
 
         UpdateSettingsFitbit {
-            token,
+            user_id,
             changeset: update
         }
     }
@@ -432,13 +449,11 @@ impl Handler<UpdateSettingsFitbit> for DbExecutor {
     fn handle(&mut self, msg: UpdateSettingsFitbit, c: &mut Self::Context) -> Self::Result {
         use self::schema::fitbit::dsl::*;
 
-        let target_user = self.handle(GetUser(msg.token), c)?;
-
         let conn = self.0.get()?;
 
         // Check if settings are null at the moment
         let first_update = fitbit
-            .filter(user_id.eq(target_user.id))
+            .filter(user_id.eq(msg.user_id))
             .count()
             .first::<i64>(&conn)? == 0;
 
@@ -459,7 +474,7 @@ impl Handler<UpdateSettingsFitbit> for DbExecutor {
         let updated = if first_update {
             diesel::insert_into(fitbit)
                 .values(FitbitCredentials {
-                    user_id: target_user.id,
+                    user_id: msg.user_id,
                     client_id: msg.changeset.client_id.unwrap(),
                     client_secret: msg.changeset.client_secret.unwrap(),
                     client_token: msg.changeset.client_token.unwrap_or(None),
@@ -467,7 +482,7 @@ impl Handler<UpdateSettingsFitbit> for DbExecutor {
                 .get_result(&conn)?
         } else {
             diesel::update(fitbit)
-                .filter(user_id.eq(target_user.id))
+                .filter(user_id.eq(msg.user_id))
                 .set(msg.changeset)
                 .get_result(&conn)?
         };

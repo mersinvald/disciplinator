@@ -2,8 +2,12 @@ use failure::{Fail};
 use futures::Future;
 use futures::future;
 use uuid::Uuid;
+use std::cell::RefCell;
 use std::str::FromStr;
 use log::{info, debug};
+use std::sync::Arc;
+use std::rc::Rc;
+use std::collections::HashMap;
 
 use actix_web::actix::{SyncArbiter, Addr};
 use actix_web::{
@@ -24,8 +28,10 @@ use actix_web::middleware::{
     self,
     Middleware,
     Started,
+    Response as MwResponse,
     session::{
         SessionBackend,
+        SessionImpl,
         SessionStorage,
         Session,
     }
@@ -47,6 +53,15 @@ use crate::master::HeadmasterExecutor;
 use crate::master;
 
 use crate::db::models::User;
+
+macro_rules! try_or_respond {
+    ($req:expr) => {
+        match $req {
+            Ok(id) => id,
+            Err(err) => return Box::new(future::ok(ServiceError::from(err).error_response()))
+        }
+    }
+}
 
 fn register(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
     let db = req.state().db.clone();
@@ -79,7 +94,8 @@ fn login(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Err
 }
 
 fn get_summary(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    do_get_summary(req)
+    let user_id = try_or_respond!(req.user_id());
+    do_get_summary(req, user_id)
         .then(|res| match res {
             Ok(summary) => Ok(HttpResponse::Ok().json(Response::data(summary))),
             Err(e) => Ok(ServiceError::from(e).error_response())
@@ -88,7 +104,8 @@ fn get_summary(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpRespons
 }
 
 fn get_state(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    do_get_summary(req)
+    let user_id = try_or_respond!(req.user_id());
+    do_get_summary(req, user_id)
         .then(|res| match res {
             Ok(summary) => Ok(HttpResponse::Ok().json(Response::data(summary.state))),
             Err(e) => Ok(ServiceError::from(e).error_response())
@@ -98,9 +115,7 @@ fn get_state(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse,
 
 type SummaryFuture = Box<dyn Future<Item = Summary, Error = failure::Error>>;
 
-fn do_get_summary(req: &HttpRequest<AppState>) -> SummaryFuture {
-    let token = req.token().expect("ISE: token not verified during AuthMiddleware stage");
-
+fn do_get_summary(req: &HttpRequest<AppState>, user_id: i64) -> SummaryFuture {
     let datetime = req.match_info()
         .get("timestamp")
         .and_then(|s| i64::from_str(s).ok())
@@ -119,7 +134,7 @@ fn do_get_summary(req: &HttpRequest<AppState>) -> SummaryFuture {
     let db = req.state().db.clone();
 
     let settings = req.state().db
-        .send(db::GetSettings(token.clone()))
+        .send(db::GetSettings(user_id))
         .from_err()
         .and_then(|res| match res {
             Ok(settings) => Ok(settings),
@@ -127,7 +142,7 @@ fn do_get_summary(req: &HttpRequest<AppState>) -> SummaryFuture {
         });
 
     let fitbit = req.state().db
-        .send(db::GetSettingsFitbit(token))
+        .send(db::GetSettingsFitbit(user_id))
         .map_err(failure::Error::from)
         // Check if there is token and flatten error
         .and_then(|res| match res {
@@ -181,7 +196,7 @@ fn do_get_summary(req: &HttpRequest<AppState>) -> SummaryFuture {
     let summary = summary_and_token
         .and_then(move |(summary, fitbit_token)| {
             db.send(db::UpdateSettingsFitbit::new(
-                token, db::models::UpdateFitbitCredentials {
+                user_id, db::models::UpdateFitbitCredentials {
                     client_token: Some(Some(fitbit_token.to_json())),
                     ..Default::default()
                 }))
@@ -193,10 +208,9 @@ fn do_get_summary(req: &HttpRequest<AppState>) -> SummaryFuture {
 }
 
 fn get_settings(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    // We can safely unwrap here since AuthMiddleware checked all the errors before
-    let token = req.token().expect("ISE: token not verified during AuthMiddleware stage");
+    let user_id = try_or_respond!(req.user_id());
     req.state().db
-        .send(db::GetSettings(token))
+        .send(db::GetSettings(user_id))
         .from_err()
         .and_then(|res| match res {
             Ok(mut settings) => {
@@ -208,13 +222,12 @@ fn get_settings(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpRespon
 }
 
 fn update_settings(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    // We can safely unwrap here since AuthMiddleware checked all the errors before
-    let token = req.token().expect("ISE: token not verified during AuthMiddleware stage");
+    let user_id = try_or_respond!(req.user_id());
     let db = req.state().db.clone();
     req.json()
         .from_err()
         .and_then(move |body: db::models::UpdateSettings| {
-            db.send(db::UpdateSettings::new(token, body))
+            db.send(db::UpdateSettings::new(user_id, body))
                 .from_err()
                 .and_then(|res| match res {
                     Ok(settings) => {
@@ -227,10 +240,9 @@ fn update_settings(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpRes
 }
 
 fn get_settings_fitbit(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    // We can safely unwrap here since AuthMiddleware checked all the errors before
-    let token = req.token().expect("ISE: token not verified during AuthMiddleware stage");
+    let user_id = try_or_respond!(req.user_id());
     req.state().db
-        .send(db::GetSettingsFitbit(token))
+        .send(db::GetSettingsFitbit(user_id))
         .from_err()
         .and_then(|res| match res {
             Ok(mut settings) => {
@@ -242,13 +254,12 @@ fn get_settings_fitbit(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = Htt
 }
 
 fn update_settings_fitbit(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    // We can safely unwrap here since AuthMiddleware checked all the errors before
-    let token = req.token().expect("ISE: token not verified during AuthMiddleware stage");
+    let user_id = try_or_respond!(req.user_id());
     let db = req.state().db.clone();
     req.json()
         .from_err()
         .and_then(move |body: db::models::UpdateFitbitCredentials| {
-            db.send(db::UpdateSettingsFitbit::new(token, body))
+            db.send(db::UpdateSettingsFitbit::new(user_id, body))
                 .from_err()
                 .and_then(|res| match res {
                     Ok(settings) => {
@@ -261,10 +272,9 @@ fn update_settings_fitbit(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = 
 }
 
 fn get_user(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    // We can safely unwrap here since AuthMiddleware checked all the errors before
-    let token = req.token().expect("ISE: token not verified during AuthMiddleware stage");
+    let user_id = try_or_respond!(req.user_id());
     req.state().db
-        .send(db::GetUser(token))
+        .send(db::GetUser(user_id))
         .from_err()
         .and_then(|res| match res {
             Ok(mut user) => {
@@ -278,13 +288,12 @@ fn get_user(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, 
 }
 
 fn update_user(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    // We can safely unwrap here since AuthMiddleware checked all the errors before
-    let token = req.token().expect("ISE: token not verified during AuthMiddleware stage");
+    let user_id = try_or_respond!(req.user_id());
     let db = req.state().db.clone();
     req.json()
         .from_err()
         .and_then(move |body: http::UpdateUser| {
-            db.send(db::UpdateUser::new(token, body))
+            db.send(db::UpdateUser::new(user_id, body))
                 .from_err()
                 .and_then(|res| match res {
                     Ok(mut user) => {
@@ -304,7 +313,11 @@ fn validate_email(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResp
 
 pub fn start(config: Config, db_addr: Addr<DbExecutor>, headmaster: Addr<HeadmasterExecutor>) -> Result<Addr<Server>, Error> {
     let server = server::new(move || {
-        App::with_state(AppState { db: db_addr.clone(), headmaster: headmaster.clone() })
+        App::with_state(AppState {
+                db: db_addr.clone(),
+                headmaster: headmaster.clone(),
+                token_map: Rc::new(RefCell::new(HashMap::new())),
+            })
             .middleware(middleware::Logger::default())
             .prefix("/1")
             .resource("/register", |r| r.method(Method::POST).a(register))
@@ -342,13 +355,14 @@ pub fn start(config: Config, db_addr: Addr<DbExecutor>, headmaster: Addr<Headmas
 struct AppState {
     db: Addr<DbExecutor>,
     headmaster: Addr<HeadmasterExecutor>,
+    token_map: Rc<RefCell<HashMap<Uuid, i64>>>,
 }
 
+#[derive(Copy, Clone, Debug)]
 struct AuthMiddleware;
+
 impl Middleware<AppState> for AuthMiddleware {
     fn start(&self, req: &HttpRequest<AppState>) -> actix_web::Result<Started> {
-        use std::str::FromStr;
-
         // Don't touch options requests
         if req.method() == "OPTIONS" {
             return Ok(Started::Done);
@@ -360,11 +374,16 @@ impl Middleware<AppState> for AuthMiddleware {
 }
 
 fn verify_token(token: Uuid, state: &AppState) -> actix_web::Result<Started> {
+    let token_map = state.token_map.clone();
     let user = state.db
-        .send(db::GetUser(token))
+        .send(db::GetUserByToken(token.clone()))
         .from_err()
-        .and_then(|res| match res {
-            Ok(user) => Ok(None),
+        .and_then(move |res| match res {
+            Ok(user) => {
+                let mut token_map = token_map.borrow_mut();
+                token_map.insert(token, user.id);
+                Ok(None)
+            },
             Err(e) => Ok(Some(ServiceError::Unauthorized.error_response()))
         });
 
@@ -388,5 +407,25 @@ impl<T> ExtractTokenHeader for HttpRequest<T> {
             .map_err(|_| ServiceError::Unauthorized)?;
 
         Ok(token)
+    }
+}
+
+trait ExtractUserId {
+    fn user_id(&self) -> Result<i64, ServiceError>;
+}
+
+impl ExtractUserId for HttpRequest<AppState> {
+    fn user_id(&self) -> Result<i64, ServiceError> {
+        let token = self.token()?;
+        let token_map = self.state()
+            .token_map
+            .borrow();
+        let id = token_map
+            .get(&token)
+            .ok_or_else(|| ServiceError::Internal {
+                error: "no token -> id pair in state hashmap after AuthMiddleware".into(),
+                backtrace: String::new(),
+            })?;
+        Ok(*id)
     }
 }
