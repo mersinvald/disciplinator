@@ -1,5 +1,8 @@
 FROM rust:1.31.1-stretch
 
+ENV TZ=Europe/Moscow
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
 RUN cd /opt && git clone https://github.com/mersinvald/disciplinator.git &&\
     cd disciplinator && cargo build --release &&\
     mkdir /etc/disciplinator
