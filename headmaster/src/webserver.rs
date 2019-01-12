@@ -64,13 +64,13 @@ use crate::db::models::User;
 
 type HttpResult = Result<HttpResponse, ServiceError>;
 
-fn create_response<D, E>(result: Result<D, E>) -> HttpResponse
+fn create_response<D, E>(result: Result<D, E>) -> HttpResult
     where D: Serialize,
           ServiceError: From<E>
 {
     match result {
-        Ok(data) => HttpResponse::Ok().json(Response::data(data)),
-        Err(err) => ServiceError::from(err).error_response()
+        Ok(data) => Ok(HttpResponse::Ok().json(Response::data(data))),
+        Err(err) => Err(ServiceError::from(err))
     }
 }
 
@@ -86,7 +86,7 @@ async fn db_response<D, E, M>(state: &AppState, message: M) -> HttpResult
         state.db.send(message)
     )?;
 
-    Ok(create_response(db_result))
+    create_response(db_result)
 }
 
 async fn db_response_map<D, E, M, F>(state: &AppState, message: M, map: F) -> HttpResult
@@ -102,7 +102,7 @@ async fn db_response_map<D, E, M, F>(state: &AppState, message: M, map: F) -> Ht
         state.db.send(message)
     )?;
 
-    Ok(create_response(db_result.map(map)))
+    create_response(db_result.map(map))
 }
 
 async fn register(json: Json<http::Register>, state: RequestState<AppState>) -> HttpResult {
