@@ -411,6 +411,7 @@ impl UpdateSettingsFitbit {
     pub fn new(token: Uuid, mut update: models::UpdateFitbitCredentials) -> Self {
         // Make sure to overwrite Token with NULL if credentials are changed
         if update.client_token.is_none() && (update.client_id.is_some() || update.client_secret.is_some()) {
+            debug!("fitbit credentials updated: nulling the token");
             update.client_token = Some(None)
         };
 

@@ -31,10 +31,10 @@ pub struct FitbitAuthData {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct FitbitActivity {
-    sedentary_minutes: i32,
-    lightly_active_minutes: i32,
-    fairly_active_minutes: i32,
-    very_active_minutes: i32,
+    sedentary_minutes: u32,
+    lightly_active_minutes: u32,
+    fairly_active_minutes: u32,
+    very_active_minutes: u32,
 }
 
 use serde_json::Value;
@@ -120,7 +120,7 @@ impl ActivityGrabber for FitbitActivityGrabber {
             let stat = hourly_stats
                 .entry(value.time.hour())
                 .or_insert(HourlyActivityStats {
-                    hour: value.time.hour() as i32,
+                    hour: value.time.hour(),
                     ..HourlyActivityStats::default()
                 });
 

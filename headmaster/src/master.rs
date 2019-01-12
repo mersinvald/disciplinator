@@ -53,12 +53,12 @@ impl<G: ActivityGrabber> Handler<GetSummary<G>> for HeadmasterExecutor
 
 #[derive(Copy, Clone, Debug)]
 pub struct HeadmasterConfig {
-    pub minimum_active_time: i32,
-    pub max_accounted_active_minutes: i32,
-    pub debt_limit: i32,
+    pub minimum_active_time: u32,
+    pub max_accounted_active_minutes: u32,
+    pub debt_limit: u32,
     pub day_begins_at: NaiveTime,
     pub day_ends_at: NaiveTime,
-    pub day_length: i32,
+    pub day_length: u32,
     pub user_date_time: NaiveDateTime,
 }
 
@@ -219,12 +219,12 @@ impl<G: ActivityGrabber> HeadmasterWorker<G> {
             for interval in &sleep_intervals {
                 // Zero debt, zero overtime
                 let activity_during_sleep = self.config.minimum_active_time;
-                if h.hour >= interval.start.hour() as i32 && h.hour < interval.end.hour() as i32 {
+                if h.hour >= interval.start.hour() && h.hour < interval.end.hour() {
                     h.accounted_active_minutes = activity_during_sleep;
                     h.tracking_disabled = true;
-                } else if h.hour == interval.end.hour() as i32 {
+                } else if h.hour == interval.end.hour() {
                     h.accounted_active_minutes =
-                        i32::min(interval.end.minute() as i32, activity_during_sleep);
+                        u32::min(interval.end.minute(), activity_during_sleep);
                     if h.accounted_active_minutes == activity_during_sleep {
                         h.tracking_disabled = true;
                     }
@@ -238,8 +238,8 @@ impl<G: ActivityGrabber> HeadmasterWorker<G> {
     fn normalize_by_threshold(&self, mut hours: Vec<HourSummary>) -> Vec<HourSummary> {
         hours.iter_mut().for_each(|h| {
             h.accounted_active_minutes =
-                i32::min(h.accounted_active_minutes, self.config.max_accounted_active_minutes);
-            h.debt = i32::min(h.debt, self.config.debt_limit);
+                u32::min(h.accounted_active_minutes, self.config.max_accounted_active_minutes);
+            h.debt = u32::min(h.debt, self.config.debt_limit);
         });
 
         hours
@@ -268,7 +268,7 @@ impl<G: ActivityGrabber> HeadmasterWorker<G> {
         hours
     }
 
-    fn calculate_debt(&self, hours: &[HourSummary]) -> i32 {
+    fn calculate_debt(&self, hours: &[HourSummary]) -> u32 {
         hours.last().map(|h| h.debt).unwrap_or(0)
     }
 

@@ -33,11 +33,11 @@ impl State {
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HourSummary {
-    pub hour: i32,
-    pub debt: i32,
-    pub active_minutes: i32,
+    pub hour: u32,
+    pub debt: u32,
+    pub active_minutes: u32,
     #[serde(skip)]
-    pub accounted_active_minutes: i32,
+    pub accounted_active_minutes: u32,
     pub tracking_disabled: bool,
     pub complete: bool,
 }

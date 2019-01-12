@@ -3,6 +3,7 @@ use futures::Future;
 use futures::future;
 use uuid::Uuid;
 use std::str::FromStr;
+use log::{info, debug};
 
 use actix_web::actix::{SyncArbiter, Addr};
 use actix_web::{
@@ -113,6 +114,8 @@ fn do_get_summary(req: &HttpRequest<AppState>) -> SummaryFuture {
         }.into())))
     };
 
+    debug!("client time: {}", datetime);
+
     let db = req.state().db.clone();
 
     let settings = req.state().db
@@ -130,6 +133,7 @@ fn do_get_summary(req: &HttpRequest<AppState>) -> SummaryFuture {
         .and_then(|res| match res {
             Ok(fitbit) => {
                 if fitbit.client_token.is_none() {
+                    debug!("no token in database for user {}", fitbit.user_id);
                     Err(ServiceError::TokenExpired.into())
                 } else {
                     Ok(fitbit)
@@ -150,12 +154,13 @@ fn do_get_summary(req: &HttpRequest<AppState>) -> SummaryFuture {
             };
 
             let headmaster_config = master::HeadmasterConfig {
-                minimum_active_time: settings.hourly_activity_goal,
-                max_accounted_active_minutes: settings.hourly_activity_limit.unwrap_or(settings.hourly_activity_goal * 3),
-                debt_limit: settings.hourly_debt_limit.unwrap_or(settings.hourly_activity_goal * 3),
-                day_begins_at: settings.day_starts_at,
+                // Guaranteed to be < 180 by checks in database
+                minimum_active_time: settings.hourly_activity_goal as u32,
+                max_accounted_active_minutes: settings.hourly_activity_limit.unwrap_or(settings.hourly_activity_goal * 3) as u32,
+                debt_limit: settings.hourly_debt_limit.unwrap_or(settings.hourly_activity_goal * 3) as u32,
+                day_begins_at: settings.day_starts_at ,
                 day_ends_at: settings.day_ends_at,
-                day_length: settings.day_length.unwrap_or((settings.day_ends_at.hour() - settings.day_starts_at.hour()) as i32),
+                day_length: settings.day_length.map(|l| l as u32).unwrap_or(settings.day_ends_at.hour() - settings.day_starts_at.hour()),
                 user_date_time: datetime,
             };
 
