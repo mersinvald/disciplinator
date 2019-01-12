@@ -18,6 +18,8 @@ use sha2::{Sha256, Digest};
 use uuid::Uuid;
 use log::{debug, info};
 
+use actix_web::Json;
+
 /// This is db executor actor. We are going to run 3 of them in parallel.
 pub struct DbExecutor(pub Pool<ConnectionManager<PgConnection>>);
 
@@ -27,12 +29,14 @@ pub struct CreateUser {
     pub passwd_hash: Vec<u8>,
 }
 
-impl From<proto_http::Register> for CreateUser {
-    fn from(body: proto_http::Register) -> Self {
+impl CreateUser {
+    pub fn from_body(body: Json<proto_http::Register>) -> Self {
+        let body = body.into_inner();
+        let passwd_hash = crate::util::sha256hash(body.passwd.as_bytes());
         CreateUser {
             username: body.username,
             email: body.email,
-            passwd_hash: crate::util::sha256hash(body.passwd.as_bytes())
+            passwd_hash
         }
     }
 }
@@ -102,11 +106,13 @@ pub struct LoginUser {
     pub passwd_hash: Vec<u8>,
 }
 
-impl From<proto_http::Login> for LoginUser {
-    fn from(body: proto_http::Login) -> Self {
+impl LoginUser {
+    pub fn from_body(body: Json<proto_http::Login>) -> Self {
+        let body = body.into_inner();
+        let passwd_hash = crate::util::sha256hash(body.passwd.as_bytes());
         LoginUser {
             username: body.username,
-            passwd_hash: crate::util::sha256hash(body.passwd.as_bytes())
+            passwd_hash
         }
     }
 }
@@ -227,6 +233,10 @@ impl UpdateUser {
             }
         }
     }
+
+    pub fn from_json(user_id: i64, update: Json<proto_http::UpdateUser>) -> Self {
+        Self::new(user_id, update.into_inner())
+    }
 }
 
 impl Message for UpdateUser {
@@ -287,10 +297,10 @@ pub struct UpdateSettings {
 }
 
 impl UpdateSettings {
-    pub fn new(user_id: i64, update: models::UpdateSettings) -> Self {
+    pub fn new(user_id: i64, update: Json<models::UpdateSettings>) -> Self {
         UpdateSettings {
             user_id,
-            changeset: update
+            changeset: update.into_inner()
         }
     }
 }
@@ -436,6 +446,10 @@ impl UpdateSettingsFitbit {
             user_id,
             changeset: update
         }
+    }
+
+    pub fn from_json(user_id: i64, update: Json<models::UpdateFitbitCredentials>) -> Self {
+        Self::new(user_id, update.into_inner())
     }
 }
 

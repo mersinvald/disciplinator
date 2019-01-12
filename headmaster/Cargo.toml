@@ -31,3 +31,4 @@ r2d2 = "0.8.3"
 futures = "0.1.25"
 sha2 = "0.8.0"
 uuid = { version = "0.6", features = ["serde", "v4"] }
+actix-web-async-await = "0.2.0"

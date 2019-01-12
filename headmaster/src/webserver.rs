@@ -8,8 +8,11 @@ use log::{info, debug};
 use std::sync::Arc;
 use std::rc::Rc;
 use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
 
-use actix_web::actix::{SyncArbiter, Addr};
+use actix_web_async_await::{await, compat, compat2};
+use actix_web::actix;
+use actix_web::actix::{SyncArbiter, Addr, Message};
 use actix_web::{
     server,
     http::{Method, header},
@@ -21,6 +24,10 @@ use actix_web::{
     Responder,
     HttpMessage,
     AsyncResponder,
+    Json,
+    Path,
+    dev::JsonConfig,
+    State as RequestState,
 };
 use actix_net::server::Server;
 
@@ -63,289 +70,219 @@ macro_rules! try_or_respond {
     }
 }
 
-fn register(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    let db = req.state().db.clone();
-    req.json()
-        .from_err()
-        .and_then(move |body: http::Register| {
-            db.send(db::CreateUser::from(body))
-                .from_err()
-                .and_then(|res| match res {
-                    Ok(user_id) => Ok(HttpResponse::Ok().json(Response::data(user_id))),
-                    Err(e) => Ok(ServiceError::from(e).error_response())
-                })
-        })
-        .responder()
+type HttpResult = Result<HttpResponse, Error>;
+
+fn create_response<D, E>(result: Result<D, E>) -> HttpResponse
+    where D: Serialize,
+          ServiceError: From<E>
+{
+    match result {
+        Ok(data) => HttpResponse::Ok().json(Response::data(data)),
+        Err(err) => ServiceError::from(err).error_response()
+    }
 }
 
-fn login(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    let db = req.state().db.clone();
-    req.json()
-        .from_err()
-        .and_then(move |body: http::Login| {
-            db.send(db::LoginUser::from(body))
-                .from_err()
-                .and_then(|res| match res {
-                    Ok(user_id) => Ok(HttpResponse::Ok().json(Response::data(user_id))),
-                    Err(e) => Ok(ServiceError::from(e).error_response())
-                })
-        })
-        .responder()
+async fn db_response<D, E, M>(state: &AppState, message: M) -> HttpResult
+    where M: Message<Result = Result<D, E>> + Send + 'static,
+          <M as Message>::Result: Send,
+          D: Serialize + 'static,
+          E: 'static,
+          ServiceError: From<E>,
+          DbExecutor: actix::Handler<M>,
+{
+    let db_result = await!(
+        state.db.send(message)
+    )?;
+
+    Ok(create_response(db_result))
 }
 
-fn get_summary(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    let user_id = try_or_respond!(req.user_id());
-    do_get_summary(req, user_id)
-        .then(|res| match res {
-            Ok(summary) => Ok(HttpResponse::Ok().json(Response::data(summary))),
-            Err(e) => Ok(ServiceError::from(e).error_response())
-        })
-        .responder()
+async fn db_response_map<D, E, M, F>(state: &AppState, message: M, map: F) -> HttpResult
+    where M: Message<Result = Result<D, E>> + Send + 'static,
+          <M as Message>::Result: Send,
+          D: Serialize + 'static,
+          E: 'static,
+          ServiceError: From<E>,
+          DbExecutor: actix::Handler<M>,
+          F: Fn(D) -> D + 'static,
+{
+    let db_result = await!(
+        state.db.send(message)
+    )?;
+
+    Ok(create_response(db_result.map(map)))
 }
 
-fn get_state(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    let user_id = try_or_respond!(req.user_id());
-    do_get_summary(req, user_id)
-        .then(|res| match res {
-            Ok(summary) => Ok(HttpResponse::Ok().json(Response::data(summary.state))),
-            Err(e) => Ok(ServiceError::from(e).error_response())
-        })
-        .responder()
+async fn register(json: Json<http::Register>, state: RequestState<AppState>) -> HttpResult {
+    await!(db_response(&state, db::CreateUser::from_body(json)))
 }
 
-type SummaryFuture = Box<dyn Future<Item = Summary, Error = failure::Error>>;
+async fn login(json: Json<http::Login>, state: RequestState<AppState>) -> HttpResult  {
+    await!(db_response(&state, db::LoginUser::from_body(json)))
+}
 
-fn do_get_summary(req: &HttpRequest<AppState>, user_id: i64) -> SummaryFuture {
-    let datetime = req.match_info()
-        .get("timestamp")
-        .and_then(|s| i64::from_str(s).ok())
-        .map(|ts| NaiveDateTime::from_timestamp(ts, 0));
+async fn get_summary(path: Path<i64>, req: HttpRequest<AppState>) -> HttpResult {
+    let user_id = req.user_id()?;
+    let timestamp = path.into_inner();
+    let summary = await!(do_get_summary(req.state(), user_id, timestamp))?;
+    Ok(HttpResponse::Ok().json(Response::data(summary)))
+}
 
-    let datetime = match datetime {
-        Some(dt) => dt,
-        None => return Box::new(future::result(Err(ServiceError::InvalidSetting {
-            key: "timestamp".into(),
-            hint: "local time in seconds since Unix Epoch".into()
-        }.into())))
-    };
+async fn get_state(path: Path<i64>, req: HttpRequest<AppState>) -> HttpResult {
+    let user_id = req.user_id()?;
+    let timestamp = path.into_inner();
+    let summary = await!(do_get_summary(req.state(), user_id, timestamp))?;
+    Ok(HttpResponse::Ok().json(Response::data(summary.state)))
+}
 
+async fn do_get_summary(state: &AppState, timestamp: i64, user_id: i64) -> Result<Summary, Error> {
+    let datetime = NaiveDateTime::from_timestamp(timestamp, 0);
     debug!("client time: {}", datetime);
 
-    let db = req.state().db.clone();
+    // Get needed actors from state
+    let db = &state.db;
+    let headmaster = &state.headmaster;
 
-    let settings = req.state().db
-        .send(db::GetSettings(user_id))
-        .from_err()
-        .and_then(|res| match res {
-            Ok(settings) => Ok(settings),
-            Err(err) => Err(err)
-        });
+    // Fetch settings and Fitbit credentials
+    let settings = await!(db.send(db::GetSettings(user_id)))??;
+    let mut fitbit = await!(db.send(db::GetSettingsFitbit(user_id)))??;
 
-    let fitbit = req.state().db
-        .send(db::GetSettingsFitbit(user_id))
-        .map_err(failure::Error::from)
-        // Check if there is token and flatten error
-        .and_then(|res| match res {
-            Ok(fitbit) => {
-                if fitbit.client_token.is_none() {
-                    debug!("no token in database for user {}", fitbit.user_id);
-                    Err(ServiceError::TokenExpired.into())
-                } else {
-                    Ok(fitbit)
-                }
-            },
-            Err(err) => Err(err)
-        });
+    // Check if there is no token
+    let fitbit_token = fitbit.client_token.take()
+        .ok_or(ServiceError::TokenExpired)?;
 
-    let headmaster = req.state().headmaster.clone();
+    // Deserialize token
+    let fitbit_token = FitbitToken::from_json(&fitbit_token)
+        .map_err(|_| ServiceError::TokenExpired)?;
 
-    let summary_and_token = settings.join(fitbit)
-        .and_then(move |(settings, fitbit)| -> Box<dyn Future<Item = (Summary, FitbitToken), Error = failure::Error>> {
-            // Deserialize token
-            let token = fitbit.client_token.expect("ISE: token option is not cleared");
-            let fitbit_token = match FitbitToken::from_json(&token) {
-                Ok(token) => token,
-                Err(err) => return Box::new(future::err(ServiceError::TokenExpired.into()))
-            };
+    // Construct headmaster config
+    let headmaster_config = master::HeadmasterConfig {
+        // Guaranteed to be < 180 by checks in database
+        minimum_active_time: settings.hourly_activity_goal as u32,
+        max_accounted_active_minutes: settings.hourly_activity_limit.unwrap_or(settings.hourly_activity_goal * 3) as u32,
+        debt_limit: settings.hourly_debt_limit.unwrap_or(settings.hourly_activity_goal * 3) as u32,
+        day_begins_at: settings.day_starts_at ,
+        day_ends_at: settings.day_ends_at,
+        day_length: settings.day_length.map(|l| l as u32).unwrap_or(settings.day_ends_at.hour() - settings.day_starts_at.hour()),
+        user_date_time: datetime,
+    };
 
-            let headmaster_config = master::HeadmasterConfig {
-                // Guaranteed to be < 180 by checks in database
-                minimum_active_time: settings.hourly_activity_goal as u32,
-                max_accounted_active_minutes: settings.hourly_activity_limit.unwrap_or(settings.hourly_activity_goal * 3) as u32,
-                debt_limit: settings.hourly_debt_limit.unwrap_or(settings.hourly_activity_goal * 3) as u32,
-                day_begins_at: settings.day_starts_at ,
-                day_ends_at: settings.day_ends_at,
-                day_length: settings.day_length.map(|l| l as u32).unwrap_or(settings.day_ends_at.hour() - settings.day_starts_at.hour()),
-                user_date_time: datetime,
-            };
+    // Construct fitbit grabber authentication data
+    let auth_data = FitbitAuthData {
+        id: fitbit.client_id,
+        secret: fitbit.client_secret,
+        token: fitbit_token,
+    };
 
-            let auth_data = FitbitAuthData {
-                id: fitbit.client_id,
-                secret: fitbit.client_secret,
-                token: fitbit_token,
-            };
+    // Request summary and new token from Headmaster actor
+    let message = master::GetSummary::<FitbitActivityGrabber>::new(headmaster_config, auth_data);
+    let request = headmaster.send(message);
+    let (summary, new_token) = await!(request)??;
 
-            let future = headmaster.send(master::GetSummary::<FitbitActivityGrabber>::new(headmaster_config, auth_data))
-                .map_err(failure::Error::from)
-                // flatten error
-                .and_then(|res| res);
+    // Update Fitbit token in database
+    let new_token = new_token.to_json();
+    let changeset = db::models::UpdateFitbitCredentials {
+        client_token: Some(Some(new_token)),
+        ..Default::default()
+    };
+    let message = db::UpdateSettingsFitbit::new(user_id, changeset);
+    await!(db.send(message))?;
 
-            Box::new(future)
-        });
-
-    let summary = summary_and_token
-        .and_then(move |(summary, fitbit_token)| {
-            db.send(db::UpdateSettingsFitbit::new(
-                user_id, db::models::UpdateFitbitCredentials {
-                    client_token: Some(Some(fitbit_token.to_json())),
-                    ..Default::default()
-                }))
-                .map_err(failure::Error::from)
-                .and_then(|_| Ok(summary))
-        });
-
-    Box::new(summary)
+    // Return summary
+    Ok(summary)
 }
 
-fn get_settings(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    let user_id = try_or_respond!(req.user_id());
-    req.state().db
-        .send(db::GetSettings(user_id))
-        .from_err()
-        .and_then(|res| match res {
-            Ok(mut settings) => {
-                Ok(HttpResponse::Ok().json(Response::data(settings)))
-            },
-            Err(e) => Ok(ServiceError::from(e).error_response())
-        })
-        .responder()
+async fn get_settings(req: HttpRequest<AppState>) -> HttpResult {
+    let user_id = req.user_id()?;
+    await!(db_response(req.state(), db::GetSettings(user_id)))
 }
 
-fn update_settings(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    let user_id = try_or_respond!(req.user_id());
-    let db = req.state().db.clone();
-    req.json()
-        .from_err()
-        .and_then(move |body: db::models::UpdateSettings| {
-            db.send(db::UpdateSettings::new(user_id, body))
-                .from_err()
-                .and_then(|res| match res {
-                    Ok(settings) => {
-                        Ok(HttpResponse::Ok().json(Response::data(settings)))
-                    },
-                    Err(e) => Ok(ServiceError::from(e).error_response())
-                })
-        })
-        .responder()
+async fn update_settings(json: Json<db::models::UpdateSettings>, req: HttpRequest<AppState>) -> HttpResult {
+    let user_id = req.user_id()?;
+    await!(db_response(req.state(), db::UpdateSettings::new(user_id, json)))
 }
 
-fn get_settings_fitbit(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    let user_id = try_or_respond!(req.user_id());
-    req.state().db
-        .send(db::GetSettingsFitbit(user_id))
-        .from_err()
-        .and_then(|res| match res {
-            Ok(mut settings) => {
-                Ok(HttpResponse::Ok().json(Response::data(settings)))
-            },
-            Err(e) => Ok(ServiceError::from(e).error_response())
-        })
-        .responder()
+async fn get_settings_fitbit(req: HttpRequest<AppState>) -> HttpResult {
+    let user_id = req.user_id()?;
+    await!(db_response(req.state(), db::GetSettingsFitbit(user_id)))
 }
 
-fn update_settings_fitbit(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    let user_id = try_or_respond!(req.user_id());
-    let db = req.state().db.clone();
-    req.json()
-        .from_err()
-        .and_then(move |body: db::models::UpdateFitbitCredentials| {
-            db.send(db::UpdateSettingsFitbit::new(user_id, body))
-                .from_err()
-                .and_then(|res| match res {
-                    Ok(settings) => {
-                        Ok(HttpResponse::Ok().json(Response::data(settings)))
-                    },
-                    Err(e) => Ok(ServiceError::from(e).error_response())
-                })
-        })
-        .responder()
+async fn update_settings_fitbit(json: Json<db::models::UpdateFitbitCredentials>, req: HttpRequest<AppState>) -> HttpResult {
+    let user_id = req.user_id()?;
+    await!(db_response(req.state(), db::UpdateSettingsFitbit::from_json(user_id, json)))
 }
 
-fn get_user(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    let user_id = try_or_respond!(req.user_id());
-    req.state().db
-        .send(db::GetUser(user_id))
-        .from_err()
-        .and_then(|res| match res {
-            Ok(mut user) => {
-                // Clean the passwd hash
-                user.passwd_hash.clear();
-                Ok(HttpResponse::Ok().json(Response::data(user)))
-            },
-            Err(e) => Ok(ServiceError::from(e).error_response())
-        })
-        .responder()
+async fn get_user(req: HttpRequest<AppState>) -> HttpResult {
+    let user_id = req.user_id()?;
+    let response = db_response_map(req.state(), db::GetUser(user_id), |mut user| {
+        // Clean the passwd hash
+        user.passwd_hash.clear();
+        user
+    });
+    await!(response)
 }
 
-fn update_user(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    let user_id = try_or_respond!(req.user_id());
-    let db = req.state().db.clone();
-    req.json()
-        .from_err()
-        .and_then(move |body: http::UpdateUser| {
-            db.send(db::UpdateUser::new(user_id, body))
-                .from_err()
-                .and_then(|res| match res {
-                    Ok(mut user) => {
-                        // Clean the passwd hash
-                        user.passwd_hash.clear();
-                        Ok(HttpResponse::Ok().json(Response::data(user)))
-                    },
-                    Err(e) => Ok(ServiceError::from(e).error_response())
-                })
-        })
-        .responder()
+async fn update_user(json: Json<http::UpdateUser>, req: HttpRequest<AppState>) -> HttpResult {
+    let user_id = req.user_id()?;
+    let response = db_response_map(req.state(), db::UpdateUser::from_json(user_id, json), |mut user| {
+        // Clean the passwd hash
+        user.passwd_hash.clear();
+        user
+    });
+    await!(response)
 }
 
-fn validate_email(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    Box::new(future::ok(ServiceError::NotImplemented.error_response()))
+async fn validate_email(req: HttpRequest<AppState>) -> HttpResult {
+    Ok(ServiceError::NotImplemented.error_response())
 }
 
 pub fn start(config: Config, db_addr: Addr<DbExecutor>, headmaster: Addr<HeadmasterExecutor>) -> Result<Addr<Server>, Error> {
     let server = server::new(move || {
+
+        let json_config = move |cfg: &mut (JsonConfig<AppState>, ())| {
+            cfg.0.limit(4096)
+                .error_handler(|err, req| {
+                    let err_msg = format!("{}", err);
+                    actix_web::error::InternalError::from_response(
+                        err, ServiceError::InvalidPayload {
+                            error: err_msg,
+                        }.error_response()
+                    ).into()
+                });
+        };
+
         App::with_state(AppState {
                 db: db_addr.clone(),
                 headmaster: headmaster.clone(),
                 token_map: Rc::new(RefCell::new(HashMap::new())),
             })
             .middleware(middleware::Logger::default())
-            .prefix("/1")
-            .resource("/register", |r| r.method(Method::POST).a(register))
-            .resource("/login", |r| r.method(Method::POST).a(login))
+            .resource("/register", move |r| r.method(Method::POST).with_config(compat2(register), json_config))
+            .resource("/login", move |r| r.method(Method::POST).with_config(compat2(login), json_config))
             .resource("/summary/{timestamp}", |r| {
                 r.middleware(AuthMiddleware);
-                r.method(Method::GET).a(get_summary);
+                r.method(Method::GET).with(compat2(get_summary));
             })
             .resource("/state/{timestamp}", |r| {
                 r.middleware(AuthMiddleware);
-                r.method(Method::GET).a(get_state);
+                r.method(Method::GET).with(compat2(get_state));
             })
-            .resource("/settings", |r| {
+            .resource("/settings", move |r| {
                 r.middleware(AuthMiddleware);
-                r.method(Method::GET).a(get_settings);
-                r.method(Method::POST).a(update_settings);
+                r.method(Method::GET).with(compat(get_settings));
+                r.method(Method::POST).with_config(compat2(update_settings), json_config);
             })
-            .resource("/settings/fitbit", |r| {
+            .resource("/settings/fitbit", move |r| {
                 r.middleware(AuthMiddleware);
-                r.method(Method::POST).a(update_settings_fitbit);
-                r.method(Method::GET).a(get_settings_fitbit);
+                r.method(Method::POST).with_config(compat2(update_settings_fitbit), json_config);
+                r.method(Method::GET).with(compat(get_settings_fitbit));
             })
-            .resource("/user", |r| {
+            .resource("/user", move |r| {
                 r.middleware(AuthMiddleware);
-                r.method(Method::GET).a(get_user);
-                r.method(Method::POST).a(update_user);
+                r.method(Method::GET).with(compat(get_user));
+                r.method(Method::POST).with_config(compat2(update_user), json_config);
             })
-            .resource("/user/validate_email/{email_token}", |r| r.method(Method::GET).a(validate_email))
+            .resource("/user/validate_email/{email_token}", |r| r.method(Method::GET).with(compat(validate_email)))
     }).bind(&config.network.addr)?
         .start();
 

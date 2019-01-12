@@ -53,6 +53,8 @@ impl<E: std::fmt::Display> Response<(), E> {
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "type")]
 pub enum Error {
+    #[fail(display = "payload is invalid: {}", error)]
+    InvalidPayload { error: String },
     #[fail(display = "{} {:?} already exists", key, value)]
     CredentialsConflict { key: String, value: String },
     #[fail(display = "email {:?} is not verified", email)]
@@ -103,6 +105,7 @@ impl ResponseError for Error {
         use self::Error::*;
         let response = Response::error(self.clone());
         match self {
+            InvalidPayload { .. } => HttpResponse::BadRequest().json(response),
             CredentialsConflict { .. } => HttpResponse::Conflict().json(response),
             EmailNotVerified { .. } => HttpResponse::Forbidden().json(response),
             InvalidSetting { .. } => HttpResponse::Forbidden().json(response),

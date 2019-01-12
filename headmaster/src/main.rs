@@ -1,3 +1,5 @@
+#![feature(await_macro, futures_api, async_await)]
+
 #[macro_use]
 extern crate diesel;
 
