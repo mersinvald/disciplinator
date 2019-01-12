@@ -116,14 +116,14 @@ async fn login(json: Json<http::Login>, state: RequestState<AppState>) -> HttpRe
 async fn get_summary(path: Path<i64>, req: HttpRequest<AppState>) -> HttpResult {
     let user_id = req.user_id()?;
     let timestamp = path.into_inner();
-    let summary = await!(do_get_summary(req.state(), user_id, timestamp))?;
+    let summary = await!(do_get_summary(req.state(), timestamp, user_id))?;
     Ok(HttpResponse::Ok().json(Response::data(summary)))
 }
 
 async fn get_state(path: Path<i64>, req: HttpRequest<AppState>) -> HttpResult {
     let user_id = req.user_id()?;
     let timestamp = path.into_inner();
-    let summary = await!(do_get_summary(req.state(), user_id, timestamp))?;
+    let summary = await!(do_get_summary(req.state(), timestamp, user_id))?;
     Ok(HttpResponse::Ok().json(Response::data(summary.state)))
 }
 
