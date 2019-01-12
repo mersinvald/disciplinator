@@ -31,3 +31,10 @@ CREATE TABLE IF NOT EXISTS fitbit
     client_token VARCHAR(1024),
     PRIMARY KEY(user_id)
 );
+
+CREATE TABLE IF NOT EXISTS tokens
+(
+    token UUID NOT NULL,
+    user_id BIGINT NOT NULL,
+    PRIMARY KEY(token)
+);

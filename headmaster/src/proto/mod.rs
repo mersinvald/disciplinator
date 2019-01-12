@@ -32,7 +32,7 @@ impl<E: std::fmt::Display> ErrorBody<E> {
 }
 
 impl<D> Response<D, ()> {
-    fn data(data: D) -> Self {
+    pub fn data(data: D) -> Self {
         Response {
             data: Some(data),
             error: None
@@ -41,7 +41,7 @@ impl<D> Response<D, ()> {
 }
 
 impl<E: std::fmt::Display> Response<(), E> {
-    fn error(error: E) -> Self {
+    pub fn error(error: E) -> Self {
         Response {
             data: None,
             error: Some(ErrorBody::new(error)),
@@ -70,7 +70,7 @@ pub enum Error {
     #[fail(display = "not yet implemented")]
     NotImplemented,
     #[fail(display = "internal error: {}", error)]
-    Internal { error: String },
+    Internal { error: String, backtrace: String },
 }
 
 pub trait DataResponse: Serialize + DeserializeOwned + std::fmt::Debug + Clone {}
@@ -84,15 +84,15 @@ impl<T: DataResponse> From<T> for Response<T, ()> {
     }
 }
 
-impl From<Error> for Response<(), Error> {
-    fn from(err: Error) -> Self {
-        Response::error(err)
-    }
-}
-
-impl From<failure::Error> for Response<(), Error> {
+impl From<failure::Error> for Error {
     fn from(err: failure::Error) -> Self {
-        Response::error(Error::Internal { error: format!("{}", err) })
+        match err.downcast::<Error>() {
+            Ok(error) => error,
+            Err(error) => Error::Internal {
+                error: format!("{}", error),
+                backtrace: format!("{}", error.backtrace()),
+            }
+        }
     }
 }
 
@@ -115,4 +115,3 @@ impl ResponseError for Error {
         }
     }
 }
-

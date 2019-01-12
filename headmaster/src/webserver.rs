@@ -1,6 +1,7 @@
 use failure::{Fail};
 use futures::Future;
 use futures::future;
+use uuid::Uuid;
 
 use actix_web::actix::{SyncArbiter, Addr};
 use actix_web::{
@@ -11,7 +12,9 @@ use actix_web::{
     HttpRequest,
     HttpResponse,
     ResponseError,
-    Responder
+    Responder,
+    HttpMessage,
+    AsyncResponder,
 };
 use actix_net::server::Server;
 
@@ -19,6 +22,11 @@ use actix_web::middleware::{
     self,
     Middleware,
     Started,
+    session::{
+        SessionBackend,
+        SessionStorage,
+        Session,
+    }
 };
 
 use headmaster::proto::{HourSummary, State, Summary};
@@ -27,16 +35,41 @@ use priestess::{
 };
 
 use crate::config::Config;
-use crate::db::DbExecutor;
+use crate::db::{self, DbExecutor};
+use crate::proto::http;
 use crate::proto::Error as ServiceError;
 use crate::proto::Response;
 
+use crate::db::models::User;
+
 fn register(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    Box::new(future::ok(ServiceError::NotImplemented.error_response()))
+    let db = req.state().db.clone();
+    req.json()
+        .from_err()
+        .and_then(move |body: http::Register| {
+            db.send(db::CreateUser::from(body))
+                .from_err()
+                .and_then(|res| match res {
+                    Ok(user_id) => Ok(HttpResponse::Ok().json(Response::data(user_id))),
+                    Err(e) => Ok(ServiceError::from(e).error_response())
+                })
+        })
+        .responder()
 }
 
 fn login(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    Box::new(future::ok(ServiceError::NotImplemented.error_response()))
+    let db = req.state().db.clone();
+    req.json()
+        .from_err()
+        .and_then(move |body: http::Login| {
+            db.send(db::LoginUser::from(body))
+                .from_err()
+                .and_then(|res| match res {
+                    Ok(user_id) => Ok(HttpResponse::Ok().json(Response::data(user_id))),
+                    Err(e) => Ok(ServiceError::from(e).error_response())
+                })
+        })
+        .responder()
 }
 
 fn get_summary(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
@@ -56,11 +89,41 @@ fn update_settings(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpRes
 }
 
 fn get_user(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    Box::new(future::ok(ServiceError::NotImplemented.error_response()))
+    // We can safely unwrap here since AuthMiddleware checked all the errors before
+    let token = req.token().expect("ISE: token not verified during AuthMiddleware stage");
+    req.state().db
+        .send(db::GetUser(token))
+        .from_err()
+        .and_then(|res| match res {
+            Ok(mut user) => {
+                // Clean the passwd hash
+                user.passwd_hash.clear();
+                Ok(HttpResponse::Ok().json(Response::data(user)))
+            },
+            Err(e) => Ok(ServiceError::from(e).error_response())
+        })
+        .responder()
 }
 
 fn update_user(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
-    Box::new(future::ok(ServiceError::NotImplemented.error_response()))
+    // We can safely unwrap here since AuthMiddleware checked all the errors before
+    let token = req.token().expect("ISE: token not verified during AuthMiddleware stage");
+    let db = req.state().db.clone();
+    req.json()
+        .from_err()
+        .and_then(move |body: http::UpdateUser| {
+            db.send(db::UpdateUser::new(token, body))
+                .from_err()
+                .and_then(|res| match res {
+                    Ok(mut user) => {
+                        // Clean the passwd hash
+                        user.passwd_hash.clear();
+                        Ok(HttpResponse::Ok().json(Response::data(user)))
+                    },
+                    Err(e) => Ok(ServiceError::from(e).error_response())
+                })
+        })
+        .responder()
 }
 
 fn validate_email(req: &HttpRequest<AppState>) -> Box<dyn Future<Item = HttpResponse, Error = Error>> {
@@ -106,27 +169,46 @@ struct AppState {
 struct AuthMiddleware;
 impl Middleware<AppState> for AuthMiddleware {
     fn start(&self, req: &HttpRequest<AppState>) -> actix_web::Result<Started> {
+        use std::str::FromStr;
+
         // Don't touch options requests
         if req.method() == "OPTIONS" {
             return Ok(Started::Done);
         }
 
-        // Get token from headers
-        let token = req.headers()
-            .get("AUTHORIZATION")
-            .map(|value| value.to_str().ok())
-            .ok_or(ServiceError::Unauthorized)?;
-
-        match token {
-            Some(t) => {
-                verify_token(&t)?;
-                Ok(Started::Done)
-            },
-            None => Err(ServiceError::Unauthorized.into())
-        }
+        let token = req.token()?;
+        Ok(verify_token(token, req.state())?)
     }
 }
 
-fn verify_token(token: &str) -> Result<(), ServiceError> {
-    Ok(())
+fn verify_token(token: Uuid, state: &AppState) -> actix_web::Result<Started> {
+    let user = state.db
+        .send(db::GetUser(token))
+        .from_err()
+        .and_then(|res| match res {
+            Ok(user) => Ok(None),
+            Err(e) => Ok(Some(ServiceError::Unauthorized.error_response()))
+        });
+
+    Ok(Started::Future(Box::new(user)))
+}
+
+trait ExtractTokenHeader {
+    fn token(&self) -> Result<Uuid, ServiceError>;
+}
+
+impl<T> ExtractTokenHeader for HttpRequest<T> {
+    fn token(&self) -> Result<Uuid, ServiceError> {
+        use std::str::FromStr;
+
+        let token = self.headers()
+            .get("AUTHORIZATION")
+            .and_then(|value| value.to_str().ok())
+            .ok_or(ServiceError::Unauthorized)?;
+
+        let token = Uuid::from_str(token)
+            .map_err(|_| ServiceError::Unauthorized)?;
+
+        Ok(token)
+    }
 }

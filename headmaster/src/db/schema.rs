@@ -21,6 +21,13 @@ table! {
 }
 
 table! {
+    tokens (token) {
+        token -> Uuid,
+        user_id -> Int8,
+    }
+}
+
+table! {
     users (id) {
         id -> Int8,
         username -> Varchar,
@@ -33,5 +40,6 @@ table! {
 allow_tables_to_appear_in_same_query!(
     config,
     fitbit,
+    tokens,
     users,
 );

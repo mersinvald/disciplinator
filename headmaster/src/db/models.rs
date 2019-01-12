@@ -1,8 +1,10 @@
 use crate::db::schema::*;
 use diesel::{Queryable, Insertable};
+use serde::{Serialize, Deserialize};
 use chrono::NaiveTime;
+use uuid::Uuid;
 
-#[derive(Queryable)]
+#[derive(Queryable, Serialize, Debug, Deserialize)]
 pub struct User {
     pub id: i64,
     pub username: String,
@@ -29,7 +31,7 @@ pub struct UpdateUser {
     pub passwd_hash: Option<Vec<u8>>,
 }
 
-#[derive(Queryable, Insertable)]
+#[derive(Queryable, Insertable, Serialize, Deserialize)]
 #[table_name = "config"]
 pub struct Config {
     pub user_id: i64,
@@ -54,7 +56,7 @@ struct UpdateConfig {
 }
 
 
-#[derive(Queryable, Insertable)]
+#[derive(Queryable, Insertable, Serialize, Deserialize)]
 #[table_name = "fitbit"]
 pub struct FitbitCredentials {
     pub user_id: i64,
@@ -71,3 +73,9 @@ struct UpdateFitbitCredentials {
     pub client_token: Option<Option<String>>,
 }
 
+#[derive(Queryable, Insertable, Serialize, Deserialize)]
+#[table_name = "tokens"]
+pub struct Token {
+    pub token: Uuid,
+    pub user_id: i64,
+}
