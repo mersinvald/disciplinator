@@ -55,6 +55,7 @@ use crate::config::Config;
 use crate::db::{self, DbExecutor};
 use crate::proto::http;
 use crate::proto::Error as ServiceError;
+use crate::proto::IntoError;
 use crate::proto::Response;
 use crate::master::HeadmasterExecutor;
 use crate::master;
@@ -70,7 +71,7 @@ macro_rules! try_or_respond {
     }
 }
 
-type HttpResult = Result<HttpResponse, Error>;
+type HttpResult = Result<HttpResponse, ServiceError>;
 
 fn create_response<D, E>(result: Result<D, E>) -> HttpResponse
     where D: Serialize,
@@ -135,7 +136,7 @@ async fn get_state(path: Path<i64>, req: HttpRequest<AppState>) -> HttpResult {
     Ok(HttpResponse::Ok().json(Response::data(summary.state)))
 }
 
-async fn do_get_summary(state: &AppState, timestamp: i64, user_id: i64) -> Result<Summary, Error> {
+async fn do_get_summary(state: &AppState, timestamp: i64, user_id: i64) -> Result<Summary, ServiceError> {
     let datetime = NaiveDateTime::from_timestamp(timestamp, 0);
     debug!("client time: {}", datetime);
 
@@ -257,6 +258,7 @@ pub fn start(config: Config, db_addr: Addr<DbExecutor>, headmaster: Addr<Headmas
                 token_map: Rc::new(RefCell::new(HashMap::new())),
             })
             .middleware(middleware::Logger::default())
+            .prefix("/1")
             .resource("/register", move |r| r.method(Method::POST).with_config(compat2(register), json_config))
             .resource("/login", move |r| r.method(Method::POST).with_config(compat2(login), json_config))
             .resource("/summary/{timestamp}", |r| {
@@ -360,8 +362,7 @@ impl ExtractUserId for HttpRequest<AppState> {
         let id = token_map
             .get(&token)
             .ok_or_else(|| ServiceError::Internal {
-                error: "no token -> id pair in state hashmap after AuthMiddleware".into(),
-                backtrace: String::new(),
+                error: "no token -> id pair in state hashmap after AuthMiddleware".into()
             })?;
         Ok(*id)
     }

@@ -2,9 +2,10 @@ pub mod activity;
 pub mod http;
 
 
-use failure::Fail;
+use failure::{Fail, AsFail};
 pub use self::activity::{HourSummary, State, Summary};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
+use actix_web::actix::MailboxError;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,7 +54,7 @@ impl<E: std::fmt::Display> Response<(), E> {
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "type")]
 pub enum Error {
-    #[fail(display = "payload is invalid: {}", error)]
+    #[fail(display = "payload is invalid")]
     InvalidPayload { error: String },
     #[fail(display = "{} {:?} already exists", key, value)]
     CredentialsConflict { key: String, value: String },
@@ -71,8 +72,8 @@ pub enum Error {
     Unauthorized,
     #[fail(display = "not yet implemented")]
     NotImplemented,
-    #[fail(display = "internal error: {}", error)]
-    Internal { error: String, backtrace: String },
+    #[fail(display = "internal error")]
+    Internal { error: String },
 }
 
 pub trait DataResponse: Serialize + DeserializeOwned + std::fmt::Debug + Clone {}
@@ -87,16 +88,33 @@ impl<T: DataResponse> From<T> for Response<T, ()> {
 }
 
 impl From<failure::Error> for Error {
-    fn from(err: failure::Error) -> Self {
-        match err.downcast::<Error>() {
-            Ok(error) => error,
+    fn from(error: failure::Error) -> Self {
+        match error.downcast::<Error>() {
+            Ok(error) => error.clone(),
             Err(error) => Error::Internal {
                 error: format!("{}", error),
-                backtrace: format!("{}", error.backtrace()),
             }
         }
     }
 }
+
+pub trait IntoError: Sized + std::fmt::Display {
+    fn into_error(self) -> Error {
+        Error::Internal {
+            error: format!("{}", self)
+        }
+    }
+}
+
+impl<E> From<E> for Error
+    where E: IntoError
+{
+    fn from(error: E) -> Error {
+        error.into_error()
+    }
+}
+
+impl IntoError for MailboxError {}
 
 use actix_web::{ResponseError, HttpResponse};
 

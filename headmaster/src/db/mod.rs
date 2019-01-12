@@ -342,8 +342,7 @@ impl Handler<UpdateSettings> for DbExecutor {
         }
 
         let mut transaction_error = ServiceError::Internal {
-            error: "uninitialized result".into(),
-            backtrace: "".into()
+            error: "uninitialized result".into()
         };
 
         // Perform the update in transaction
