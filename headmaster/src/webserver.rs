@@ -46,7 +46,7 @@ use actix_web::middleware::{
 
 use chrono::{NaiveDateTime, Timelike};
 
-use crate::proto::{HourSummary, State, Summary};
+use crate::proto::{HourSummary, Status, Summary};
 use priestess::{
     ActivityGrabber, FitbitActivityGrabber, FitbitAuthData, FitbitToken, SleepInterval, TokenJson,
 };
@@ -124,7 +124,7 @@ async fn get_state(path: Path<i64>, req: HttpRequest<AppState>) -> HttpResult {
     let user_id = req.user_id()?;
     let timestamp = path.into_inner();
     let summary = await!(do_get_summary(req.state(), timestamp, user_id))?;
-    Ok(HttpResponse::Ok().json(Response::data(summary.state)))
+    Ok(HttpResponse::Ok().json(Response::data(summary.status)))
 }
 
 async fn do_get_summary(state: &AppState, timestamp: i64, user_id: i64) -> Result<Summary, ServiceError> {
@@ -178,7 +178,7 @@ async fn do_get_summary(state: &AppState, timestamp: i64, user_id: i64) -> Resul
         ..Default::default()
     };
     let message = db::UpdateSettingsFitbit::new(user_id, changeset);
-    await!(db.send(message))?;
+    await!(db.send(message))??;
 
     // Return summary
     Ok(summary)

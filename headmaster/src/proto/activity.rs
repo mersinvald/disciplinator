@@ -4,7 +4,7 @@ use crate::proto::DataResponse;
 #[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
-    pub state: State,
+    pub status: Status,
     pub day_log: Vec<HourSummary>,
 }
 
@@ -13,18 +13,18 @@ impl DataResponse for Summary {}
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "type")]
-pub enum State {
+pub enum Status {
     Normal(HourSummary),
     DebtCollection(HourSummary),
     DebtCollectionPaused(HourSummary),
 }
 
-impl DataResponse for State {}
+impl DataResponse for Status {}
 
-impl State {
+impl Status {
     pub fn is_debt_collection(self) -> bool {
         match self {
-            State::DebtCollection(..) => true,
+            Status::DebtCollection(..) => true,
             _ => false,
         }
     }

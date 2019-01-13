@@ -24,7 +24,7 @@ use actix_web::middleware::{
     Started,
 };
 
-use headmaster::proto::{HourSummary, State, Summary};
+use headmaster::proto::{HourSummary, Status, Summary};
 use priestess::{
     ActivityGrabber, FitbitActivityGrabber, FitbitAuthData, FitbitToken, SleepInterval, TokenJson
 };

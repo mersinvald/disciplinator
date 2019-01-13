@@ -1,4 +1,4 @@
-use driver::{CallbackTrigger, Driver, State};
+use driver::{CallbackTrigger, Driver, Status};
 use failure::{format_err, Error};
 use log::{debug, error, info, trace, warn};
 use serde::Deserialize;
@@ -125,7 +125,7 @@ fn discover_plugins<P: AsRef<Path>>(base_dir: P) -> Result<Vec<Plugin>, Error> {
     Ok(plugins)
 }
 
-fn execute_plugins(plugins: &[PathBuf], state: State) {
+fn execute_plugins(plugins: &[PathBuf], state: Status) {
     for plugin in plugins {
         match execute_plugin(&plugin, state) {
             Ok(exit_code) => {
@@ -140,13 +140,13 @@ fn execute_plugins(plugins: &[PathBuf], state: State) {
     }
 }
 
-fn execute_plugin(plugin: &Path, state: State) -> Result<std::process::ExitStatus, Error> {
+fn execute_plugin(plugin: &Path, state: Status) -> Result<std::process::ExitStatus, Error> {
     use std::process::Command;
 
     let (discriminant, stat) = match state {
-        State::Normal(stat) => ("Normal", stat),
-        State::DebtCollection(stat) => ("DebtCollection", stat),
-        State::DebtCollectionPaused(stat) => ("DebtCollectionPaused", stat),
+        Status::Normal(stat) => ("Normal", stat),
+        Status::DebtCollection(stat) => ("DebtCollection", stat),
+        Status::DebtCollectionPaused(stat) => ("DebtCollectionPaused", stat),
     };
 
     let (active, debt) = (format!("{}", stat.active_minutes), format!("{}", stat.debt));

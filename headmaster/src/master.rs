@@ -5,7 +5,7 @@ use failure::Error;
 use log::{info, debug, error};
 use std::marker::PhantomData;
 
-use crate::proto::activity::{Summary, HourSummary, State};
+use crate::proto::activity::{Summary, HourSummary, Status};
 
 use actix_web::actix::{Message, Actor, SyncContext, Handler};
 
@@ -144,14 +144,14 @@ impl<G: ActivityGrabber> HeadmasterWorker<G> {
         // 3. no debt => Normal
         let max_accounted = self.config.max_accounted_active_minutes;
         let state = if hour.debt > 0 && hour.active_minutes < max_accounted {
-            State::DebtCollection(hour)
+            Status::DebtCollection(hour)
         } else if hour.debt > 0 && hour.active_minutes >= max_accounted {
-            State::DebtCollectionPaused(hour)
+            Status::DebtCollectionPaused(hour)
         } else {
-            State::Normal(hour)
+            Status::Normal(hour)
         };
 
-        let summary = Summary { state, day_log };
+        let summary = Summary { status: state, day_log };
 
         Ok(summary)
     }
