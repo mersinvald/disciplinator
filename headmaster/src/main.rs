@@ -59,8 +59,11 @@ struct Options {
 use crate::db::DbExecutor;
 
 fn main() -> Result<(), Error> {
-    // Init logging: info globally, debug for the app
-    ::std::env::set_var("RUST_LOG", "info,headmaster=debug");
+    if std::env::var("RUST_LOG").is_err() {
+        // Init logging: info globally, debug for the app
+        std::env::set_var("RUST_LOG", "headmaster=info");
+    }
+
     env_logger::init();
 
     // Load args
@@ -68,11 +71,12 @@ fn main() -> Result<(), Error> {
 
     // Load config
     let config = Config::load(&options.config_path)?;
+    println!("{}", config);
 
     // Connect to the database
-    let manager = diesel::r2d2::ConnectionManager::new(config.database.addr.clone());
+    let manager = diesel::r2d2::ConnectionManager::new(config.database_url.clone());
     let pool = r2d2::Pool::builder()
-        .max_size(config.database.pool_size)
+        .max_size(config.database_pool_size)
         .build(manager)?;
 
     // Start the System
@@ -80,14 +84,14 @@ fn main() -> Result<(), Error> {
 
     // Create Actix SyncArbiter entity with out DbExecutor
     let db_addr = SyncArbiter::start(
-        config.database.pool_size as usize,
+        config.database_pool_size as usize,
         move || DbExecutor(pool.clone())
     );
 
     // Create Actix SyncArbiter for Headmaster
     let headmaster = SyncArbiter::start(
         // TODO: separate config entity
-        config.database.pool_size as usize,
+        config.database_pool_size as usize,
         move || master::HeadmasterExecutor
     );
 

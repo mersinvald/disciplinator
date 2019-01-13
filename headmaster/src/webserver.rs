@@ -276,7 +276,7 @@ pub fn start(config: Config, db_addr: Addr<DbExecutor>, headmaster: Addr<Headmas
                 r.method(Method::POST).with_config(compat2(update_user), json_config);
             })
             .resource("/user/validate_email/{email_token}", |r| r.method(Method::GET).with(compat(validate_email)))
-    }).bind(&config.network.addr)?
+    }).bind(&config.listen_on)?
         .start();
 
     Ok(server)
