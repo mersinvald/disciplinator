@@ -1,0 +1,3 @@
+database_url = "postgres://headmaster:headmaster@postgres/headmaster"
+database_pool_size = 4
+listen_on = "0.0.0.0:8080"

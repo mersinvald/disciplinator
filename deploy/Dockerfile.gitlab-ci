@@ -1,0 +1,17 @@
+FROM alpine:latest
+
+ENV TZ=Europe/Moscow
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+RUN mkdir -p /opt/headmaster &&\
+    mkdir -p /opt/headmaster/migrations
+
+WORKDIR /opt/headmaster
+
+# Copy files needed to run server
+COPY diesel ./
+COPY headmaster-bin ./
+COPY headmaster/migrations ./migrations/
+
+CMD ./diesel migration run --database-url $HEADMASTER_DATABASE_URL \
+ && ./headmaster-bin

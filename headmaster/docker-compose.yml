@@ -1,0 +1,39 @@
+version: '3.5'
+services:
+  postgres:
+    restart: unless-stopped
+    image: postgres:11
+    container_name: postgres
+    networks:
+      - disciplinator
+    environment:
+      POSTGRES_DB: headmaster
+      POSTGRES_USER: headmaster
+      POSTGRES_PASSWORD: headmaster
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+
+  disciplinator:
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    image:  registry.ttyv.ru/mersinvald/disciplinator:latest
+    container_name: disciplinator
+    environment:
+      RUST_LOG: "info,headmaster=debug"
+      HEADMASTER_DATABASE_URL: "postgres://headmaster:headmaster@postgres/headmaster"
+      HEADMASTER_DATABASE_POOL_SIZE: "8"
+      HEADMASTER_LISTEN_ON: "0.0.0.0:8080"
+    ports:
+      - "8080:8080"
+    networks:
+      - disciplinator
+
+networks:
+  disciplinator:
+    driver: bridge
+    name: disciplinator
+
+volumes:
+  dbdata:
+    name: dbdata
