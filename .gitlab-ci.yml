@@ -1,29 +1,103 @@
 stages:
+  - test
   - build
+  - image
   - push
   - deploy
 
+variables:
+  CACHE_DIR: ${CI_PROJECT_DIR}/rust_build_cache/${CI_JOB_NAME}
+  CARGO_HOME: ${CI_PROJECT_DIR}/cargo_home
+
 before_script:
-  - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+  - deploy/rust_build_cache.sh load $CACHE_DIR $CI_PROJECT_DIR || echo "continuing without cache"
+after_script:
+  - deploy/rust_build_cache.sh save $CI_PROJECT_DIR $CACHE_DIR && echo "cache saved"
 
-image build:
-  stage: build
-  only:
-    - master
+test:
+  image: rustlang/rust:nightly
+  stage: test
   script:
-    - sed s/YOUR_CLIENT_ID/$CLIENT_ID/ headmaster/headmaster.toml.example > headmaster.toml
-    - sed -i s/YOUR_CLIENT_SECRET/$CLIENT_SECRET/ headmaster.toml
-    - echo $TOKEN > fitbit_token
-    - docker build --no-cache -t $CI_REGISTRY_IMAGE:latest -f Dockerfile ./
+    - cargo test --all
+  cache:
+    key: ${CI_JOB_NAME}
+    paths:
+      - $CACHE_DIR
+      - $CARGO_HOME
 
-image push:
+headmaster-build:
+  image: registry.gitlab.com/rust_musl_docker/image:nightly-2019-01-13
+  stage: build
+  script:
+    - cd headmaster
+    - sed -i 's/\[dependencies\]/[dependencies]\nopenssl = "*"/' Cargo.toml
+    - cargo build --release --target=x86_64-unknown-linux-musl
+    - cd $CI_PROJECT_DIR
+    - cp target/x86_64-unknown-linux-musl/release/headmaster-bin ./
+    - du -sh headmaster-bin && du -sh headmaster/migrations
+  artifacts:
+    paths:
+      - headmaster-bin
+      - headmaster/migrations
+    expire_in: 1 hour
+  cache:
+    key: ${CI_JOB_NAME}
+    paths:
+      - $CACHE_DIR
+      - $CARGO_HOME
+
+diesel-build:
+  image: registry.gitlab.com/rust_musl_docker/image:nightly-2019-01-13
+  stage: build
+  # disable cache pulling before script as it needs to be done after cloning
+  before_script: []
+  script:
+    - mkdir diesel_build && cd diesel_build
+    - git clone https://gitlab-ci-token:${CI_JOB_TOKEN}@git.ttyv.ru/mersinvald/diesel.git
+    - $CI_PROJECT_DIR/deploy/rust_build_cache.sh load $CACHE_DIR $CI_PROJECT_DIR || echo "continuing without cache"
+    - cd diesel/diesel_cli
+    - git checkout disciplinator-ci
+    - cargo build --release --target=x86_64-unknown-linux-musl --no-default-features --features "postgres"
+    - cd $CI_PROJECT_DIR
+    - cp diesel_build/diesel/target/x86_64-unknown-linux-musl/release/diesel ./
+    - du -sh diesel
+  artifacts:
+    paths:
+      - diesel
+    expire_in: 1 hour
+  cache:
+    key: ${CI_JOB_NAME}
+    paths:
+      - $CACHE_DIR
+      - $CARGO_HOME
+
+image-build:
+  stage: image
+  dependencies:
+    - diesel-build
+    - headmaster-build
+  script:
+    - docker build --no-cache -t $CI_REGISTRY_IMAGE:latest -f deploy/Dockerfile.gitlab-ci ./
+  cache: {}
+
+image-push-gitlab:
+  stage: push
+  script:
+    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker push $CI_REGISTRY_IMAGE:latest
+  cache: {}
+
+image-push-dockerhub:
   stage: push
   only:
     - master
   script:
-    - docker push $CI_REGISTRY_IMAGE:latest
+    - echo $DOCKERHUB_PASSWD | docker login -u $DOCKERHUB_USERNAME --password-stdin
+    - docker tag $CI_REGISTRY_IMAGE:latest $DOCKERHUB_USERNAME/headmaster:latest
+    - docker push $DOCKERHUB_USERNAME/headmaster:latest
+  cache: {}
 
-image peploy:
+image-peploy:
   stage: deploy
   only:
     - master
@@ -31,3 +105,4 @@ image peploy:
     - cd
   script:
       ansible-playbook /etc/ansible/playbooks/deploy.yml -l web --tags disciplinator
+  cache: {}

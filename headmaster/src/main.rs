@@ -63,7 +63,6 @@ fn main() -> Result<(), Error> {
         // Init logging: info globally, debug for the app
         std::env::set_var("RUST_LOG", "headmaster=info");
     }
-
     env_logger::init();
 
     // Load args

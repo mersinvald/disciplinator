@@ -1,6 +1,0 @@
-[database]
-addr = "postgres://user:passwd8@localhost/headmaster"
-pool_size = 4
-
-[network]
-addr = "0.0.0.0:8081"
