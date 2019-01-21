@@ -18,7 +18,7 @@ pub struct Config {
 impl Config {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         // send warning if env is set without prefix
-        if env::var("DATABASE_ADDR").or(env::var("DATABASE_POOL_SIZE")).or(env::var("LISTEN_ON")).is_ok() {
+        if env::var("DATABASE_URL").or(env::var("DATABASE_POOL_SIZE")).or(env::var("LISTEN_ON")).is_ok() {
             warn!("use prefix HEADMASTER_ to configure through ENV variables")
         }
 

@@ -1,7 +1,7 @@
 use crate::db::schema::*;
 use diesel::{Queryable, Insertable};
 use serde::{Serialize, Deserialize, Deserializer};
-use chrono::NaiveTime;
+use chrono::{DateTime, Utc, NaiveTime};
 use uuid::Uuid;
 
 #[derive(Queryable, Serialize, Debug, Deserialize)]
@@ -81,6 +81,14 @@ pub struct UpdateFitbitCredentials {
 pub struct Token {
     pub token: Uuid,
     pub user_id: i64,
+}
+
+#[derive(Queryable, Insertable, Serialize, Deserialize)]
+#[table_name = "summary_cache"]
+pub struct SummaryCache {
+    pub user_id: i64,
+    pub created_at: DateTime<Utc>,
+    pub summary: String,
 }
 
 fn some_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>

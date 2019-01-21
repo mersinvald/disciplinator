@@ -134,6 +134,14 @@ async fn do_get_summary(state: &AppState, timestamp: i64, user_id: i64) -> Resul
     let db = &state.db;
     let headmaster = &state.headmaster;
 
+    // Try to get summary from cache
+    let cached_summary = await!(db.send(db::GetCachedFitbitResponse(user_id)))??
+        .and_then(|s| serde_json::from_str(&s).ok());
+
+    if let Some(cached) = cached_summary {
+        return Ok(cached);
+    }
+
     // Fetch settings and Fitbit credentials
     let settings = await!(db.send(db::GetSettings(user_id)))??;
     let mut fitbit = await!(db.send(db::GetSettingsFitbit(user_id)))??;
@@ -178,6 +186,10 @@ async fn do_get_summary(state: &AppState, timestamp: i64, user_id: i64) -> Resul
     };
     let message = db::UpdateSettingsFitbit::new(user_id, changeset);
     await!(db.send(message))??;
+
+    // Update cache
+    let new_cache = serde_json::to_string(&summary).expect("failed to encode summary into JSON");
+    await!(db.send(db::PutCachedSummary(user_id, new_cache)))??;
 
     // Return summary
     Ok(summary)

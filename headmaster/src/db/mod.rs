@@ -1,7 +1,7 @@
 pub mod schema;
 pub mod models;
 
-use self::models::{User, NewUser, Token, Settings, FitbitCredentials, UpdateFitbitCredentials};
+use self::models::{User, NewUser, Token, Settings, FitbitCredentials, UpdateFitbitCredentials, SummaryCache};
 
 use diesel::prelude::*;
 use diesel::associations::*;
@@ -17,6 +17,7 @@ use crate::proto::http as proto_http;
 use sha2::{Sha256, Digest};
 use uuid::Uuid;
 use log::{debug, info};
+use chrono::{DateTime, Utc, Datelike};
 
 use actix_web::Json;
 
@@ -504,3 +505,62 @@ impl Handler<UpdateSettingsFitbit> for DbExecutor {
     }
 }
 
+pub struct GetCachedFitbitResponse(pub i64);
+
+impl Message for GetCachedFitbitResponse {
+    type Result = Result<Option<String>, Error>;
+}
+
+impl Handler<GetCachedFitbitResponse> for DbExecutor {
+    type Result = Result<Option<String>, Error>;
+    fn handle(&mut self, msg: GetCachedFitbitResponse, c: &mut Self::Context) -> Self::Result {
+        use self::schema::summary_cache::dsl::*;
+
+        let conn = self.0.get()?;
+
+        let current_timestamp = Utc::now();
+
+        let invalidation_lower_bound = match current_timestamp.checked_sub_signed(chrono::Duration::minutes(1)) {
+            Some(time) => time,
+            None => return Ok(None)
+        };
+
+        let cached_entity = summary_cache
+            .filter(user_id.eq(msg.0))
+            .filter(created_at.gt(invalidation_lower_bound))
+            .limit(1)
+            .get_result(&conn)
+            .ok()
+            .map(|e: SummaryCache| e.summary);
+
+        Ok(cached_entity)
+    }
+}
+
+
+pub struct PutCachedSummary(pub i64, pub String);
+
+impl Message for PutCachedSummary {
+    type Result = Result<(), Error>;
+}
+
+impl Handler<PutCachedSummary> for DbExecutor {
+    type Result = Result<(), Error>;
+    fn handle(&mut self, msg: PutCachedSummary, c: &mut Self::Context) -> Self::Result {
+        use self::schema::summary_cache::dsl::*;
+
+        let conn = self.0.get()?;
+
+        let current_timestamp = Utc::now();
+
+        diesel::insert_into(summary_cache)
+            .values(SummaryCache {
+                user_id: msg.0,
+                created_at: current_timestamp,
+                summary: msg.1,
+            })
+            .execute(&conn)?;
+
+        Ok(())
+    }
+}
