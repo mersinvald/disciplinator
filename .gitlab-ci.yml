@@ -104,5 +104,5 @@ image-peploy:
   tags:
     - cd
   script:
-      ansible-playbook /etc/ansible/playbooks/deploy.yml -l web --tags disciplinator
+      ansible-playbook /etc/ansible/playbooks/docker.yml -l web --tags disciplinator
   cache: {}
