@@ -76,9 +76,8 @@ fn create_response<D, E>(result: Result<D, E>) -> HttpResult
 
 async fn db_response<D, E, M>(state: &AppState, message: M) -> HttpResult
     where M: Message<Result = Result<D, E>> + Send + 'static,
-          <M as Message>::Result: Send,
-          D: Serialize + 'static,
-          E: 'static,
+          D: Serialize + Send + 'static,
+          E: Send + 'static,
           ServiceError: From<E>,
           DbExecutor: actix::Handler<M>,
 {
