@@ -20,7 +20,7 @@ table! {
 }
 
 table! {
-    summary_cache (user_id) {
+    summary_cache (user_id, created_at) {
         user_id -> Int8,
         created_at -> Timestamptz,
         summary -> Text,
