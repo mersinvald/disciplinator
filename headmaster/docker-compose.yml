@@ -17,7 +17,7 @@ services:
     depends_on:
       - postgres
     restart: unless-stopped
-    image:  registry.ttyv.ru/mersinvald/disciplinator:latest
+    image:  headmaster:actix
     container_name: disciplinator
     environment:
       RUST_LOG: "info,headmaster=debug"
