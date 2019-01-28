@@ -77,7 +77,7 @@ image-build:
     - diesel-build
     - headmaster-build
   script:
-    - docker build --no-cache -t $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_NAME -f deploy/Dockerfile.gitlab-ci ./
+    - docker build --no-cache -t $CI_REGISTRY_IMAGE:latest -f deploy/Dockerfile.gitlab-ci ./
   cache: {}
 
 image-push-gitlab:
