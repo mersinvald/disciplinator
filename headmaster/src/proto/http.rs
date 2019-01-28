@@ -17,5 +17,6 @@ pub struct Login {
 pub struct UpdateUser {
     pub username: Option<String>,
     pub email: Option<String>,
-    pub passwd: Option<String>,
+    pub old_passwd: Option<String>,
+    pub new_passwd: Option<String>,
 }

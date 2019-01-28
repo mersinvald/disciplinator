@@ -218,7 +218,7 @@ impl Handler<GetUserByToken> for DbExecutor {
 
 pub struct UpdateUser {
     user_id: i64,
-    changeset: models::UpdateUser,
+    update: proto_http::UpdateUser,
 }
 
 impl UpdateUser {
@@ -226,12 +226,7 @@ impl UpdateUser {
         let email_verified = update.email.as_ref().map(|_| true);
         UpdateUser {
             user_id,
-            changeset: models::UpdateUser {
-                username: update.username,
-                email: update.email,
-                email_verified,
-                passwd_hash: update.passwd.map(|p| crate::util::sha256hash(p.as_bytes()))
-            }
+            update,
         }
     }
 
@@ -252,9 +247,32 @@ impl Handler<UpdateUser> for DbExecutor {
 
         let conn = self.0.get()?;
 
+        // Check that there is user with provided old_passwd
+        let new_passwd_hash = if let Some(old_passwd) = msg.update.old_passwd {
+            let old_passwd_hash = crate::util::sha256hash(old_passwd.as_bytes());
+
+            let _ = users
+                .filter(id.eq(&msg.user_id))
+                .filter(passwd_hash.eq(&old_passwd_hash))
+                .first::<User>(&conn)
+                .map_err(|_| ServiceError::UserNotFound)?;
+
+            msg.update.new_passwd.map(|p| crate::util::sha256hash(p.as_bytes()))
+        } else {
+            None
+        };
+
+        let changeset = models::UpdateUser {
+            username: msg.update.username,
+            email: msg.update.email,
+            // TODO check if email have really changed
+            email_verified: Some(false),
+            passwd_hash: new_passwd_hash
+        };
+
         let updated_user = diesel::update(users)
             .filter(id.eq(msg.user_id))
-            .set(msg.changeset)
+            .set(changeset)
             .get_result(&conn)?;
 
         Ok(updated_user)
@@ -356,9 +374,15 @@ impl Handler<UpdateSettings> for DbExecutor {
                         hourly_activity_goal: msg.changeset.hourly_activity_goal.unwrap(),
                         day_starts_at: msg.changeset.day_starts_at.unwrap(),
                         day_ends_at: msg.changeset.day_ends_at.unwrap(),
-                        day_length: msg.changeset.day_length.unwrap_or(None),
-                        hourly_debt_limit: msg.changeset.hourly_debt_limit.unwrap_or(None),
-                        hourly_activity_limit: msg.changeset.hourly_activity_limit.unwrap_or(None),
+                        day_length: msg.changeset.day_length
+                            .map(|i| if i == 0 { None } else { Some(i) })
+                            .unwrap_or(None),
+                        hourly_debt_limit: msg.changeset.hourly_debt_limit
+                            .map(|i| if i == 0 { None } else { Some(i) })
+                            .unwrap_or(None),
+                        hourly_activity_limit: msg.changeset.hourly_activity_limit
+                            .map(|i| if i == 0 { None } else { Some(i) })
+                            .unwrap_or(None),
                     })
                     .get_result(&conn)?
             } else {

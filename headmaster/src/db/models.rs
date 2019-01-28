@@ -5,11 +5,13 @@ use chrono::{DateTime, Utc, NaiveTime};
 use uuid::Uuid;
 
 #[derive(Queryable, Serialize, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct User {
     pub id: i64,
     pub username: String,
     pub email: String,
     pub email_verified: bool,
+    #[serde(skip)]
     pub passwd_hash: Vec<u8>,
 }
 
@@ -33,42 +35,47 @@ pub struct UpdateUser {
 
 #[derive(Queryable, Insertable, Serialize, Deserialize)]
 #[table_name = "settings"]
+#[serde(rename_all = "camelCase")]
 pub struct Settings {
     pub user_id: i64,
     pub hourly_activity_goal: i32,
     pub day_starts_at: NaiveTime,
     pub day_ends_at: NaiveTime,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub day_length: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hourly_debt_limit: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hourly_activity_limit: Option<i32>,
 }
 
 #[derive(AsChangeset, Debug, Default, Serialize, Deserialize)]
 #[table_name = "settings"]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateSettings {
     pub hourly_activity_goal: Option<i32>,
     pub day_starts_at: Option<NaiveTime>,
     pub day_ends_at: Option<NaiveTime>,
-    #[serde(default, deserialize_with = "some_option")]
-    pub day_length: Option<Option<i32>>,
-    #[serde(default, deserialize_with = "some_option")]
-    pub hourly_debt_limit: Option<Option<i32>>,
-    #[serde(default, deserialize_with = "some_option")]
-    pub hourly_activity_limit: Option<Option<i32>>,
+    pub day_length: Option<i32>,
+    pub hourly_debt_limit: Option<i32>,
+    pub hourly_activity_limit: Option<i32>,
 }
 
 
 #[derive(Queryable, Insertable, Serialize, Deserialize)]
 #[table_name = "fitbit"]
+#[serde(rename_all = "camelCase")]
 pub struct FitbitCredentials {
     pub user_id: i64,
     pub client_id: String,
     pub client_secret: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub client_token: Option<String>,
 }
 
 #[derive(AsChangeset, Debug, Default, Serialize, Deserialize)]
 #[table_name = "fitbit"]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateFitbitCredentials {
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
@@ -78,6 +85,7 @@ pub struct UpdateFitbitCredentials {
 
 #[derive(Queryable, Insertable, Serialize, Deserialize)]
 #[table_name = "tokens"]
+#[serde(rename_all = "camelCase")]
 pub struct Token {
     pub token: Uuid,
     pub user_id: i64,
@@ -85,6 +93,7 @@ pub struct Token {
 
 #[derive(Queryable, Insertable, Serialize, Deserialize)]
 #[table_name = "summary_cache"]
+#[serde(rename_all = "camelCase")]
 pub struct SummaryCache {
     pub user_id: i64,
     pub created_at: DateTime<Utc>,
