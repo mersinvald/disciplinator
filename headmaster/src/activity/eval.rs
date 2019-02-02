@@ -217,12 +217,10 @@ impl DebtEvaluator {
 
         hours.iter_mut().for_each(|h| {
             for interval in &sleep_intervals {
-                if h.hour >= interval.start.hour() && h.hour < interval.end.hour() {
+                if (h.hour >= interval.start.hour() && h.hour < interval.end.hour())
+                || (h.hour == interval.end.hour() && interval.end.minute() > (60 - self.config.minimum_active_time))
+                {
                     h.tracking_disabled = true;
-                } else if h.hour == interval.end.hour() {
-                    if interval.end.minute() > (60 - self.config.minimum_active_time) {
-                        h.tracking_disabled = true;
-                    }
                 }
             }
         });

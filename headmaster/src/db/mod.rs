@@ -50,6 +50,7 @@ impl Message for CreateUser {
 impl Handler<CreateUser> for DbExecutor {
     type Result = Result<i64, Error>;
 
+    #[allow(clippy::len_zero)]
     fn handle(&mut self, msg: CreateUser, _: &mut Self::Context) -> Self::Result {
         use self::schema::users;
         use self::schema::users::dsl::*;
