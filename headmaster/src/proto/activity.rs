@@ -44,6 +44,7 @@ pub struct HourSummary {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DaySumup {
     pub debt: u32,
     pub active_minutes: u32,
