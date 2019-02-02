@@ -1,20 +1,20 @@
-pub mod schema;
 pub mod models;
+pub mod schema;
 
-use self::models::{User, NewUser, Token, Settings, FitbitCredentials, SummaryCache};
+use self::models::{FitbitCredentials, NewUser, Settings, SummaryCache, Token, User};
 
 use diesel::prelude::*;
 
-use actix_web::actix::{Message, Actor, SyncContext, Handler};
-use r2d2::Pool;
+use crate::proto::http as proto_http;
+use crate::proto::Error as ServiceError;
+use actix_web::actix::{Actor, Handler, Message, SyncContext};
+use chrono::{NaiveDate, Utc};
 use diesel::r2d2::ConnectionManager;
 use diesel::PgConnection;
 use failure::Error;
-use crate::proto::Error as ServiceError;
-use crate::proto::http as proto_http;
-use uuid::Uuid;
 use log::debug;
-use chrono::{NaiveDate, Utc};
+use r2d2::Pool;
+use uuid::Uuid;
 
 use actix_web::Json;
 
@@ -34,7 +34,7 @@ impl CreateUser {
         CreateUser {
             username: body.username,
             email: body.email,
-            passwd_hash
+            passwd_hash,
         }
     }
 }
@@ -58,7 +58,8 @@ impl Handler<CreateUser> for DbExecutor {
         let conn = self.0.get()?;
 
         // Check that there's no user with the same username
-        let username_exists = users.filter(username.eq(&msg.username))
+        let username_exists = users
+            .filter(username.eq(&msg.username))
             .limit(1)
             .load::<User>(&conn)?
             .len() != 0;
@@ -71,7 +72,8 @@ impl Handler<CreateUser> for DbExecutor {
         }
 
         // Check that there's no user with the same email
-        let email_exists = users.filter(email.eq(&msg.email))
+        let email_exists = users
+            .filter(email.eq(&msg.email))
             .limit(1)
             .load::<User>(&conn)?
             .len() != 0;
@@ -88,7 +90,7 @@ impl Handler<CreateUser> for DbExecutor {
             username: msg.username,
             email: msg.email,
             passwd_hash: msg.passwd_hash,
-            email_verified: false
+            email_verified: false,
         };
 
         let user = diesel::insert_into(users::table)
@@ -111,7 +113,7 @@ impl LoginUser {
         let passwd_hash = crate::util::sha256hash(body.passwd.as_bytes());
         LoginUser {
             username: body.username,
-            passwd_hash
+            passwd_hash,
         }
     }
 }
@@ -160,7 +162,6 @@ impl Handler<LoginUser> for DbExecutor {
     }
 }
 
-
 pub struct GetUser(pub i64);
 
 impl Message for GetUser {
@@ -183,7 +184,6 @@ impl Handler<GetUser> for DbExecutor {
         Ok(fetched)
     }
 }
-
 
 pub struct GetUserByToken(pub Uuid);
 
@@ -221,10 +221,7 @@ pub struct UpdateUser {
 
 impl UpdateUser {
     pub fn new(user_id: i64, update: proto_http::UpdateUser) -> Self {
-        UpdateUser {
-            user_id,
-            update,
-        }
+        UpdateUser { user_id, update }
     }
 
     pub fn from_json(user_id: i64, update: Json<proto_http::UpdateUser>) -> Self {
@@ -254,7 +251,9 @@ impl Handler<UpdateUser> for DbExecutor {
                 .first::<User>(&conn)
                 .map_err(|_| ServiceError::UserNotFound)?;
 
-            msg.update.new_passwd.map(|p| crate::util::sha256hash(p.as_bytes()))
+            msg.update
+                .new_passwd
+                .map(|p| crate::util::sha256hash(p.as_bytes()))
         } else {
             None
         };
@@ -264,7 +263,7 @@ impl Handler<UpdateUser> for DbExecutor {
             email: msg.update.email,
             // TODO check if email have really changed
             email_verified: Some(false),
-            passwd_hash: new_passwd_hash
+            passwd_hash: new_passwd_hash,
         };
 
         let updated_user = diesel::update(users)
@@ -290,17 +289,14 @@ impl Handler<GetSettings> for DbExecutor {
 
         let conn = self.0.get()?;
 
-        let mut s = settings
-            .filter(user_id.eq(msg.0))
-            .load::<Settings>(&conn)?;
+        let mut s = settings.filter(user_id.eq(msg.0)).load::<Settings>(&conn)?;
 
         if s.is_empty() {
-            let keys = [
-                "hourly_activity_goal",
-                "day_starts_at",
-                "dat_ends_at"
-            ];
-            Err(ServiceError::MissingConfig { keys: keys.iter().map(|s| s.to_string()).collect() }.into())
+            let keys = ["hourly_activity_goal", "day_starts_at", "dat_ends_at"];
+            Err(ServiceError::MissingConfig {
+                keys: keys.iter().map(|s| s.to_string()).collect(),
+            }
+            .into())
         } else {
             Ok(s.remove(0))
         }
@@ -316,11 +312,10 @@ impl UpdateSettings {
     pub fn new(user_id: i64, update: Json<models::UpdateSettings>) -> Self {
         UpdateSettings {
             user_id,
-            changeset: update.into_inner()
+            changeset: update.into_inner(),
         }
     }
 }
-
 
 impl Message for UpdateSettings {
     type Result = Result<Settings, Error>;
@@ -350,15 +345,21 @@ impl Handler<UpdateSettings> for DbExecutor {
             // If not -- return error with missing keys list
             if !all_present {
                 let mut keys = vec![];
-                if msg.changeset.hourly_activity_goal.is_none() { keys.push("hourly_activity_goal".into()) }
-                if msg.changeset.day_starts_at.is_none() { keys.push("day_starts_at".into()) }
-                if msg.changeset.day_ends_at.is_none() { keys.push("dat_ends_at".into()) }
+                if msg.changeset.hourly_activity_goal.is_none() {
+                    keys.push("hourly_activity_goal".into())
+                }
+                if msg.changeset.day_starts_at.is_none() {
+                    keys.push("day_starts_at".into())
+                }
+                if msg.changeset.day_ends_at.is_none() {
+                    keys.push("dat_ends_at".into())
+                }
                 return Err(ServiceError::MissingConfig { keys }.into());
             }
         }
 
         let mut transaction_error = ServiceError::Internal {
-            error: "uninitialized result".into()
+            error: "uninitialized result".into(),
         };
 
         // Perform the update in transaction
@@ -371,13 +372,19 @@ impl Handler<UpdateSettings> for DbExecutor {
                         hourly_activity_goal: msg.changeset.hourly_activity_goal.unwrap(),
                         day_starts_at: msg.changeset.day_starts_at.unwrap(),
                         day_ends_at: msg.changeset.day_ends_at.unwrap(),
-                        day_length: msg.changeset.day_length
+                        day_length: msg
+                            .changeset
+                            .day_length
                             .map(|i| if i == 0 { None } else { Some(i) })
                             .unwrap_or(None),
-                        hourly_debt_limit: msg.changeset.hourly_debt_limit
+                        hourly_debt_limit: msg
+                            .changeset
+                            .hourly_debt_limit
                             .map(|i| if i == 0 { None } else { Some(i) })
                             .unwrap_or(None),
-                        hourly_activity_limit: msg.changeset.hourly_activity_limit
+                        hourly_activity_limit: msg
+                            .changeset
+                            .hourly_activity_limit
                             .map(|i| if i == 0 { None } else { Some(i) })
                             .unwrap_or(None),
                     })
@@ -393,7 +400,7 @@ impl Handler<UpdateSettings> for DbExecutor {
             if updated.hourly_activity_goal <= 0 || updated.hourly_activity_goal > 60 {
                 transaction_error = ServiceError::InvalidSetting {
                     key: "hourly_activity_goal".into(),
-                    hint: "0 < value <= 60".into()
+                    hint: "0 < value <= 60".into(),
                 };
 
                 return Err(diesel::result::Error::RollbackTransaction);
@@ -419,7 +426,6 @@ impl Handler<UpdateSettings> for DbExecutor {
     }
 }
 
-
 pub struct GetSettingsFitbit(pub i64);
 
 impl Message for GetSettingsFitbit {
@@ -439,11 +445,11 @@ impl Handler<GetSettingsFitbit> for DbExecutor {
             .load::<FitbitCredentials>(&conn)?;
 
         if s.is_empty() {
-            let keys = [
-                "client_id",
-                "client_secret",
-            ];
-            Err(ServiceError::MissingConfig { keys: keys.iter().map(|s| s.to_string()).collect() }.into())
+            let keys = ["client_id", "client_secret"];
+            Err(ServiceError::MissingConfig {
+                keys: keys.iter().map(|s| s.to_string()).collect(),
+            }
+            .into())
         } else {
             Ok(s.remove(0))
         }
@@ -459,7 +465,7 @@ impl UpdateSettingsFitbit {
     pub fn new(user_id: i64, update: models::UpdateFitbitCredentials) -> Self {
         UpdateSettingsFitbit {
             user_id,
-            changeset: update
+            changeset: update,
         }
     }
 
@@ -488,13 +494,17 @@ impl Handler<UpdateSettingsFitbit> for DbExecutor {
 
         // If so -- check that all NOT NULL fields are present in the update
         if first_update {
-            let all_present = msg.changeset.client_id.is_some()
-                && msg.changeset.client_secret.is_some();
+            let all_present =
+                msg.changeset.client_id.is_some() && msg.changeset.client_secret.is_some();
             // If not -- return error with missing keys list
             if !all_present {
                 let mut keys = vec![];
-                if msg.changeset.client_id.is_none() { keys.push("client_id".into()) }
-                if msg.changeset.client_secret.is_none() { keys.push("client_secret".into()) }
+                if msg.changeset.client_id.is_none() {
+                    keys.push("client_id".into())
+                }
+                if msg.changeset.client_secret.is_none() {
+                    keys.push("client_secret".into())
+                }
                 return Err(ServiceError::MissingConfig { keys }.into());
             }
         }
@@ -535,10 +545,11 @@ impl Handler<GetCachedFitbitResponse> for DbExecutor {
 
         let current_timestamp = Utc::now();
 
-        let invalidation_lower_bound = match current_timestamp.checked_sub_signed(chrono::Duration::minutes(1)) {
-            Some(time) => time,
-            None => return Ok(None)
-        };
+        let invalidation_lower_bound =
+            match current_timestamp.checked_sub_signed(chrono::Duration::minutes(1)) {
+                Some(time) => time,
+                None => return Ok(None),
+            };
 
         let cached_entity = summary_cache
             .filter(user_id.eq(msg.0))
@@ -551,7 +562,6 @@ impl Handler<GetCachedFitbitResponse> for DbExecutor {
         Ok(cached_entity)
     }
 }
-
 
 pub struct PutCachedFitbitResponse(pub i64, pub String);
 
@@ -602,14 +612,13 @@ impl Handler<GetActiveHoursOverrides> for DbExecutor {
             .into_iter()
             .map(|(hour, status)| proto_http::ActivityOverride {
                 hour: hour as u32,
-                is_active: status
+                is_active: status,
             })
             .collect();
 
         Ok(rows)
     }
 }
-
 
 pub struct SetActiveHoursOverrides {
     pub user_id: i64,
@@ -635,7 +644,7 @@ impl Handler<SetActiveHoursOverrides> for DbExecutor {
                     user_id: msg.user_id,
                     override_date: msg.date,
                     override_hour: o.hour as i32,
-                    is_active: o.is_active
+                    is_active: o.is_active,
                 })
                 .on_conflict((user_id, override_date, override_hour))
                 .do_update()
@@ -646,5 +655,3 @@ impl Handler<SetActiveHoursOverrides> for DbExecutor {
         Ok(())
     }
 }
-
-

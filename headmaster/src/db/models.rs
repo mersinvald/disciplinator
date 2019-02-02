@@ -1,7 +1,7 @@
 use crate::db::schema::*;
-use diesel::{Queryable, Insertable};
-use serde::{Serialize, Deserialize};
-use chrono::{NaiveDate, DateTime, Utc, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+use diesel::{Insertable, Queryable};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Queryable, Serialize, Debug, Deserialize)]
@@ -60,7 +60,6 @@ pub struct UpdateSettings {
     pub hourly_debt_limit: Option<i32>,
     pub hourly_activity_limit: Option<i32>,
 }
-
 
 #[derive(Queryable, Insertable, Serialize, Deserialize)]
 #[table_name = "fitbit"]

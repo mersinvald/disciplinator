@@ -1,17 +1,17 @@
-use priestess::{ActivityGrabber, SleepInterval};
 use chrono::NaiveDateTime;
 use chrono::{NaiveTime, Timelike};
 use failure::Error;
-use log::{info, debug, error};
+use log::{debug, error, info};
+use priestess::{ActivityGrabber, SleepInterval};
 use std::marker::PhantomData;
 
-use crate::proto::activity::{Summary, HourSummary, Status};
+use crate::activity::data_grabber::{Data as ActivityData, DataGrabberExecutor, GetData};
 use crate::db::{DbExecutor, GetSettings};
-use crate::activity::data_grabber::{DataGrabberExecutor, GetData, Data as ActivityData};
+use crate::proto::activity::{HourSummary, Status, Summary};
 
-use tokio_async_await::compat::backward::Compat;
+use actix_web::actix::{Actor, Addr, Context, Handler, Message, ResponseFuture};
 use actix_web_async_await::await;
-use actix_web::actix::{Message, Actor, Context, Handler, Addr, ResponseFuture};
+use tokio_async_await::compat::backward::Compat;
 
 #[derive(Clone)]
 pub struct DebtEvaluatorExecutor {
@@ -40,19 +40,21 @@ impl<G: ActivityGrabber> GetSummary<G> {
         GetSummary {
             user_id,
             datetime,
-            _marker: PhantomData
+            _marker: PhantomData,
         }
     }
 }
 
 impl<G: ActivityGrabber> Message for GetSummary<G>
-    where G::Token: 'static
+where
+    G::Token: 'static,
 {
     type Result = Result<Summary, Error>;
 }
 
 impl<A: ActivityGrabber> Handler<GetSummary<A>> for DebtEvaluatorExecutor
-    where A: 'static
+where
+    A: 'static,
 {
     type Result = ResponseFuture<Summary, Error>;
 
@@ -62,31 +64,34 @@ impl<A: ActivityGrabber> Handler<GetSummary<A>> for DebtEvaluatorExecutor
 }
 
 impl DebtEvaluatorExecutor {
-    async fn evaluate<A: ActivityGrabber + 'static>(self, msg: GetSummary<A>) -> Result<Summary, Error> {
+    async fn evaluate<A: ActivityGrabber + 'static>(
+        self,
+        msg: GetSummary<A>,
+    ) -> Result<Summary, Error> {
         let settings = await!(self.db.send(GetSettings(msg.user_id)))??;
 
         let config = DebtEvaluatorConfig {
             minimum_active_time: settings.hourly_activity_goal as u32,
-            max_accounted_active_minutes: settings.hourly_activity_limit
-                .unwrap_or(settings.hourly_activity_goal * 3) as u32,
-            debt_limit: settings.hourly_debt_limit
+            max_accounted_active_minutes: settings
+                .hourly_activity_limit
+                .unwrap_or(settings.hourly_activity_goal * 3)
+                as u32,
+            debt_limit: settings
+                .hourly_debt_limit
                 .unwrap_or(settings.hourly_activity_goal * 3) as u32,
             day_begins_at: settings.day_starts_at,
             day_ends_at: settings.day_ends_at,
-            day_length: settings.day_length
+            day_length: settings
+                .day_length
                 .map(|l| l as u32)
                 .unwrap_or(settings.day_ends_at.hour() - settings.day_starts_at.hour()),
         };
 
-        let data = await!(self.grabber.send(GetData::new(
-            msg.user_id,
-            msg.datetime.date(),
-        )))??;
+        let data = await!(self
+            .grabber
+            .send(GetData::new(msg.user_id, msg.datetime.date(),)))??;
 
-        let evaluator = DebtEvaluator::new(
-            config,
-            data
-        );
+        let evaluator = DebtEvaluator::new(config, data);
 
         let summary = evaluator.current_summary();
 
@@ -111,10 +116,7 @@ pub struct DebtEvaluator {
 
 impl DebtEvaluator {
     pub fn new(config: DebtEvaluatorConfig, data: ActivityData) -> Self {
-        DebtEvaluator {
-            config,
-            data,
-        }
+        DebtEvaluator { config, data }
     }
 }
 
@@ -160,7 +162,10 @@ impl DebtEvaluator {
             Status::Normal(hour)
         };
 
-        Summary { status: state, day_log }
+        Summary {
+            status: state,
+            day_log,
+        }
     }
 
     fn get_active_minutes_hourly(&self) -> Vec<HourSummary> {
@@ -218,7 +223,8 @@ impl DebtEvaluator {
         hours.iter_mut().for_each(|h| {
             for interval in &sleep_intervals {
                 if (h.hour >= interval.start.hour() && h.hour < interval.end.hour())
-                || (h.hour == interval.end.hour() && interval.end.minute() > (60 - self.config.minimum_active_time))
+                    || (h.hour == interval.end.hour()
+                        && interval.end.minute() > (60 - self.config.minimum_active_time))
                 {
                     h.tracking_disabled = true;
                 }
@@ -241,8 +247,10 @@ impl DebtEvaluator {
 
     fn normalize_by_threshold(&self, mut hours: Vec<HourSummary>) -> Vec<HourSummary> {
         hours.iter_mut().for_each(|h| {
-            h.accounted_active_minutes =
-                u32::min(h.accounted_active_minutes, self.config.max_accounted_active_minutes);
+            h.accounted_active_minutes = u32::min(
+                h.accounted_active_minutes,
+                self.config.max_accounted_active_minutes,
+            );
             h.debt = u32::min(h.debt, self.config.debt_limit);
         });
 
@@ -251,7 +259,8 @@ impl DebtEvaluator {
 
     fn calculate_debt_hourly(&self, mut hours: Vec<HourSummary>) -> Vec<HourSummary> {
         // Calculate first hour activity debt
-        hours[0].debt = self.config
+        hours[0].debt = self
+            .config
             .minimum_active_time
             .checked_sub(hours[0].accounted_active_minutes)
             .unwrap_or(0);

@@ -1,11 +1,11 @@
 use failure::Error;
+use log::warn;
 use serde::Deserialize;
+use std::env;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
-use log::{warn};
-use std::env;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -18,7 +18,11 @@ impl Config {
     #[allow(clippy::or_fun_call)]
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         // send warning if env is set without prefix
-        if env::var("DATABASE_URL").or(env::var("DATABASE_POOL_SIZE")).or(env::var("LISTEN_ON")).is_ok() {
+        if env::var("DATABASE_URL")
+            .or(env::var("DATABASE_POOL_SIZE"))
+            .or(env::var("LISTEN_ON"))
+            .is_ok()
+        {
             warn!("use prefix HEADMASTER_ to configure through ENV variables")
         }
 
@@ -34,7 +38,11 @@ impl Config {
         macro_rules! fallback_if_none {
             ($option:expr, $key:tt, $default:expr) => {
                 $option.$key.unwrap_or_else(|| {
-                    warn!("configuration incomplete for key '{}', using default value '{}'", stringify!($key), $default);
+                    warn!(
+                        "configuration incomplete for key '{}', using default value '{}'",
+                        stringify!($key),
+                        $default
+                    );
                     $default.into()
                 })
             };
@@ -44,13 +52,17 @@ impl Config {
             Some(config) => Config {
                 database_url: env.database_url.unwrap_or(config.database_url),
                 database_pool_size: env.database_pool_size.unwrap_or(config.database_pool_size),
-                listen_on: env.listen_on.unwrap_or(config.listen_on)
+                listen_on: env.listen_on.unwrap_or(config.listen_on),
             },
             None => Config {
-                database_url: fallback_if_none!(env, database_url, "postgres://headmaster:headmaster@postgres/headmaster"),
+                database_url: fallback_if_none!(
+                    env,
+                    database_url,
+                    "postgres://headmaster:headmaster@postgres/headmaster"
+                ),
                 database_pool_size: fallback_if_none!(env, database_pool_size, 4_u32),
                 listen_on: fallback_if_none!(env, listen_on, "127.0.0.1:8080"),
-            }
+            },
         };
 
         Ok(config)
@@ -70,7 +82,7 @@ impl Display for Config {
         writeln!(f, "Running with configuration: ")?;
         writeln!(f, "  database_url: {}", self.database_url)?;
         writeln!(f, "  pool_size:    {}", self.database_pool_size)?;
-          write!(f, "  listen_on:    {}", self.listen_on)
+        write!(f, "  listen_on:    {}", self.listen_on)
     }
 }
 
@@ -80,5 +92,3 @@ pub struct EnvConfig {
     database_pool_size: Option<u32>,
     listen_on: Option<String>,
 }
-
-

@@ -1,8 +1,8 @@
 mod fitbit_grabber;
 
-use serde::{Serialize, Deserialize};
 pub use crate::fitbit_grabber::{FitbitActivityGrabber, FitbitAuthData, FitbitToken, TokenJson};
-use failure::{Fail, Error};
+use failure::{Error, Fail};
+use serde::{Deserialize, Serialize};
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct DailyActivityStats {

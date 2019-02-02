@@ -1,16 +1,22 @@
-use serde::{Serialize, Deserialize};
-use priestess::{FitbitActivityGrabber, FitbitAuthData, FitbitToken, TokenJson, ActivityGrabber, SleepInterval, HourlyActivityStats, ActivityGrabberError};
 use chrono::NaiveDate;
 use failure::Error;
 use log::warn;
+use priestess::{
+    ActivityGrabber, ActivityGrabberError, FitbitActivityGrabber, FitbitAuthData, FitbitToken,
+    HourlyActivityStats, SleepInterval, TokenJson,
+};
+use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
-use crate::proto::Error as ServiceError;
+use crate::db::{
+    models::UpdateFitbitCredentials, DbExecutor, GetActiveHoursOverrides, GetCachedFitbitResponse,
+    GetSettingsFitbit, PutCachedFitbitResponse, UpdateSettingsFitbit,
+};
 use crate::proto::http::ActivityOverride;
-use crate::db::{DbExecutor, UpdateSettingsFitbit, GetSettingsFitbit, GetCachedFitbitResponse, PutCachedFitbitResponse, GetActiveHoursOverrides, models::UpdateFitbitCredentials};
-use tokio_async_await::compat::backward::Compat;
+use crate::proto::Error as ServiceError;
+use actix_web::actix::{Actor, Addr, Context, Handler, Message, ResponseFuture};
 use actix_web_async_await::await;
-use actix_web::actix::{Message, Actor, Context, Handler, Addr, ResponseFuture};
+use tokio_async_await::compat::backward::Compat;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Data {
@@ -37,11 +43,12 @@ impl Actor for DataGrabberExecutor {
 pub struct GetData<A: ActivityGrabber> {
     user_id: i64,
     date: NaiveDate,
-    _marker: std::marker::PhantomData<A>
+    _marker: std::marker::PhantomData<A>,
 }
 
 impl<A: ActivityGrabber> Message for GetData<A>
-    where A::Token: 'static
+where
+    A::Token: 'static,
 {
     type Result = Result<Data, Error>;
 }
@@ -49,10 +56,8 @@ impl<A: ActivityGrabber> Message for GetData<A>
 impl GetData<FitbitActivityGrabber> {
     pub async fn get_data(self, db: Addr<DbExecutor>) -> Result<Data, Error> {
         // Query activity overrides before loading the cache
-        let activity_overrides = await!(db.send(GetActiveHoursOverrides(
-            self.user_id,
-            self.date
-        )))??;
+        let activity_overrides =
+            await!(db.send(GetActiveHoursOverrides(self.user_id, self.date)))??;
 
         // Query cache for data
         let cached: Option<Data> = await!(db.send(GetCachedFitbitResponse(self.user_id)))??
@@ -67,18 +72,16 @@ impl GetData<FitbitActivityGrabber> {
         let mut fitbit = await!(db.send(GetSettingsFitbit(self.user_id)))??;
 
         // Check if there is no token
-        let fitbit_token = fitbit.client_token.take()
-            .ok_or_else(|| {
-                warn!("token not found");
-                ServiceError::TokenExpired
-            })?;
+        let fitbit_token = fitbit.client_token.take().ok_or_else(|| {
+            warn!("token not found");
+            ServiceError::TokenExpired
+        })?;
 
         // Deserialize token
-        let fitbit_token = FitbitToken::from_json(&fitbit_token)
-            .map_err(|e| {
-                warn!("failed to deserialize token: {}", e);
-                ServiceError::TokenExpired
-            })?;
+        let fitbit_token = FitbitToken::from_json(&fitbit_token).map_err(|e| {
+            warn!("failed to deserialize token: {}", e);
+            ServiceError::TokenExpired
+        })?;
 
         // Construct AuthData for FitbitActivityGrabber
         let auth_data = FitbitAuthData {
@@ -98,7 +101,7 @@ impl GetData<FitbitActivityGrabber> {
             UpdateFitbitCredentials {
                 client_token: Some(token),
                 ..Default::default()
-            }
+            },
         ));
         await!(req)??;
 
@@ -109,12 +112,11 @@ impl GetData<FitbitActivityGrabber> {
         let data = Data {
             sleep_intervals,
             hourly_activity,
-            activity_overrides
+            activity_overrides,
         };
 
         // Update cache (panic here is definitely highly unlikely and should crash the server if happens)
-        let new_cache = serde_json::to_string(&data)
-            .expect("failed to encode data into JSON");
+        let new_cache = serde_json::to_string(&data).expect("failed to encode data into JSON");
         await!(db.send(PutCachedFitbitResponse(self.user_id, new_cache)))??;
 
         Ok(data)
@@ -126,20 +128,18 @@ impl<A: ActivityGrabber> GetData<A> {
         Self {
             user_id,
             date,
-            _marker: PhantomData
+            _marker: PhantomData,
         }
     }
 
     fn authenticate(auth_data: A::AuthData) -> Result<A, Error> {
         let grabber = A::new(&auth_data)
             // Convert NewNewToken error into TokenExpired error, so it would be handled correctly by webserver
-            .map_err(|e| {
-                match e.downcast::<ActivityGrabberError>() {
-                    Ok(age) => match age {
-                        ActivityGrabberError::NeedNewToken => ServiceError::TokenExpired.into(),
-                    },
-                    Err(err) => err,
-                }
+            .map_err(|e| match e.downcast::<ActivityGrabberError>() {
+                Ok(age) => match age {
+                    ActivityGrabberError::NeedNewToken => ServiceError::TokenExpired.into(),
+                },
+                Err(err) => err,
             })?;
 
         Ok(grabber)
@@ -149,11 +149,11 @@ impl<A: ActivityGrabber> GetData<A> {
 impl Handler<GetData<FitbitActivityGrabber>> for DataGrabberExecutor {
     type Result = ResponseFuture<Data, Error>;
 
-    fn handle(&mut self, msg: GetData<FitbitActivityGrabber>, _: &mut Self::Context) -> Self::Result {
+    fn handle(
+        &mut self,
+        msg: GetData<FitbitActivityGrabber>,
+        _: &mut Self::Context,
+    ) -> Self::Result {
         Box::new(Compat::new(msg.get_data(self.db.clone())))
     }
 }
-
-
-
-

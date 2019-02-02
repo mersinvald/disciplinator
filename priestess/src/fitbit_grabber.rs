@@ -1,5 +1,6 @@
 use crate::{
-    ActivityGrabber, ActivityGrabberError, DailyActivityStats, DetailedActivityStats, HourlyActivityStats, SleepInterval,
+    ActivityGrabber, ActivityGrabberError, DailyActivityStats, DetailedActivityStats,
+    HourlyActivityStats, SleepInterval,
 };
 
 use fitbit::activities::Activities;

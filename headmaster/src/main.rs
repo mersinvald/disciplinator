@@ -1,27 +1,24 @@
 // FIXME: due to diesel improper handling of proc_macro imports
 //        this is necessary to suppress warnings
 #![allow(proc_macro_derive_resolution_fallback)]
-
 #![feature(await_macro, futures_api, async_await)]
 #[macro_use]
 extern crate diesel;
 
 use failure::Error;
 
-use actix_web::actix::{SyncArbiter, Actor};
+use actix_web::actix::{Actor, SyncArbiter};
 
-mod config;
 mod activity;
-mod proto;
-mod webserver;
+mod config;
 mod db;
+mod proto;
 mod util;
+mod webserver;
 
 use crate::config::Config;
 use std::path::PathBuf;
 use structopt::StructOpt;
-
-
 
 #[derive(Clone, Debug, StructOpt)]
 #[structopt(
@@ -65,24 +62,19 @@ fn main() -> Result<(), Error> {
     let sys = actix_web::actix::System::new("disciplinator");
 
     // Create Actix SyncArbiter entity with out DbExecutor
-    let db_addr = SyncArbiter::start(
-        config.database_pool_size as usize,
-        move || DbExecutor(pool.clone())
-    );
+    let db_addr = SyncArbiter::start(config.database_pool_size as usize, move || {
+        DbExecutor(pool.clone())
+    });
 
     // Start ActivityDataGrabber
-    let activity_grabber = activity::data_grabber::DataGrabberExecutor::new(
-        db_addr.clone()
-    ).start();
+    let activity_grabber =
+        activity::data_grabber::DataGrabberExecutor::new(db_addr.clone()).start();
 
     // Create Actix SyncArbiter for Headmaster
-    let evaluator = activity::eval::DebtEvaluatorExecutor::new(
-        db_addr.clone(),
-        activity_grabber,
-    ).start();
+    let evaluator =
+        activity::eval::DebtEvaluatorExecutor::new(db_addr.clone(), activity_grabber).start();
 
-    webserver::start(config, db_addr, evaluator)
-        .expect("webserver failed");
+    webserver::start(config, db_addr, evaluator).expect("webserver failed");
 
     sys.run();
 

@@ -1,11 +1,10 @@
 pub mod activity;
 pub mod http;
 
-
-use failure::Fail;
 pub use self::activity::{HourSummary, Status, Summary};
-use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use actix_web::actix::MailboxError;
+use failure::Fail;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,10 +24,7 @@ pub struct ErrorBody<E> {
 impl<E: std::fmt::Display> ErrorBody<E> {
     fn new(error: E) -> Self {
         let message = format!("{}", error);
-        ErrorBody {
-            error,
-            message
-        }
+        ErrorBody { error, message }
     }
 }
 
@@ -36,7 +32,7 @@ impl<D> Response<D, ()> {
     pub fn data(data: D) -> Self {
         Response {
             data: Some(data),
-            error: None
+            error: None,
         }
     }
 }
@@ -93,7 +89,7 @@ impl From<failure::Error> for Error {
             Ok(error) => error.clone(),
             Err(error) => Error::Internal {
                 error: format!("{}", error),
-            }
+            },
         }
     }
 }
@@ -101,13 +97,14 @@ impl From<failure::Error> for Error {
 pub trait IntoError: Sized + std::fmt::Display {
     fn into_error(self) -> Error {
         Error::Internal {
-            error: format!("{}", self)
+            error: format!("{}", self),
         }
     }
 }
 
 impl<E> From<E> for Error
-    where E: IntoError
+where
+    E: IntoError,
 {
     fn from(error: E) -> Error {
         error.into_error()
@@ -116,7 +113,7 @@ impl<E> From<E> for Error
 
 impl IntoError for MailboxError {}
 
-use actix_web::{ResponseError, HttpResponse};
+use actix_web::{HttpResponse, ResponseError};
 
 impl ResponseError for Error {
     fn error_response(&self) -> HttpResponse {

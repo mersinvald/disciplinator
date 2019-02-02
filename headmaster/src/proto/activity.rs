@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::proto::DataResponse;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Eq, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,4 +42,3 @@ pub struct HourSummary {
     pub tracking_disabled: bool,
     pub complete: bool,
 }
-
