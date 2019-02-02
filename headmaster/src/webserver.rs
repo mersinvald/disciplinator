@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::collections::HashMap;
 use serde::Serialize;
 
-use actix_web_async_await::{await, compat, compat2};
+use actix_web_async_await::{await, compat, compat2, compat3};
 use actix_web::actix;
 use actix_web::actix::{Addr, Message};
 use actix_web::{
@@ -30,7 +30,7 @@ use actix_web::middleware::{
     Started,
 };
 
-use chrono::NaiveDateTime;
+use chrono::{NaiveDate, NaiveDateTime};
 
 use crate::proto::Summary;
 use priestess::FitbitActivityGrabber;
@@ -159,6 +159,16 @@ async fn update_user(json: Json<http::UpdateUser>, req: HttpRequest<AppState>) -
     await!(response)
 }
 
+async fn override_activity(date: Path<NaiveDate>, overrides: Json<Vec<http::ActivityOverride>>, req: HttpRequest<AppState>) -> HttpResult {
+    await!(req.state().db.send(db::SetActiveHoursOverrides {
+        user_id: req.user_id()?,
+        date: date.into_inner(),
+        overrides: overrides.into_inner(),
+    }))??;
+
+    Ok(HttpResponse::Ok().json(Response::data("ok")))
+}
+
 async fn validate_email(_req: HttpRequest<AppState>) -> HttpResult {
     Ok(ServiceError::NotImplemented.error_response())
 }
@@ -209,6 +219,10 @@ pub fn start(config: Config, db_addr: Addr<DbExecutor>, evaluator: Addr<DebtEval
                 r.middleware(AuthMiddleware);
                 r.method(Method::GET).with(compat(get_user));
                 r.method(Method::POST).with_config(compat2(update_user), json_config);
+            })
+            .resource("/override/{date}", move |r| {
+                r.middleware(AuthMiddleware);
+                r.method(Method::POST).with(compat3(override_activity));
             })
             .resource("/user/validate_email/{email_token}", |r| r.method(Method::GET).with(compat(validate_email)))
     }).bind(&config.listen_on)?

@@ -14,7 +14,7 @@ use crate::proto::Error as ServiceError;
 use crate::proto::http as proto_http;
 use uuid::Uuid;
 use log::debug;
-use chrono::Utc;
+use chrono::{NaiveDate, Utc};
 
 use actix_web::Json;
 
@@ -578,3 +578,72 @@ impl Handler<PutCachedFitbitResponse> for DbExecutor {
         Ok(())
     }
 }
+
+pub struct GetActiveHoursOverrides(pub i64, pub NaiveDate);
+
+impl Message for GetActiveHoursOverrides {
+    type Result = Result<Vec<proto_http::ActivityOverride>, Error>;
+}
+
+impl Handler<GetActiveHoursOverrides> for DbExecutor {
+    type Result = Result<Vec<proto_http::ActivityOverride>, Error>;
+
+    fn handle(&mut self, msg: GetActiveHoursOverrides, _: &mut Self::Context) -> Self::Result {
+        use self::schema::active_hours_overrides::dsl::*;
+
+        let conn = self.0.get()?;
+
+        let rows = active_hours_overrides
+            .filter(user_id.eq(msg.0))
+            .filter(override_date.eq(msg.1))
+            .select((override_hour, is_active))
+            .get_results::<(i32, bool)>(&conn)?
+            .into_iter()
+            .map(|(hour, status)| proto_http::ActivityOverride {
+                hour: hour as u32,
+                is_active: status
+            })
+            .collect();
+
+        Ok(rows)
+    }
+}
+
+
+pub struct SetActiveHoursOverrides {
+    pub user_id: i64,
+    pub date: NaiveDate,
+    pub overrides: Vec<proto_http::ActivityOverride>,
+}
+
+impl Message for SetActiveHoursOverrides {
+    type Result = Result<(), Error>;
+}
+
+impl Handler<SetActiveHoursOverrides> for DbExecutor {
+    type Result = Result<(), Error>;
+
+    fn handle(&mut self, msg: SetActiveHoursOverrides, _: &mut Self::Context) -> Self::Result {
+        use self::schema::active_hours_overrides::dsl::*;
+
+        let conn = self.0.get()?;
+
+        for o in msg.overrides {
+            diesel::insert_into(active_hours_overrides)
+                .values(models::ActiveHoursOverrides {
+                    user_id: msg.user_id,
+                    override_date: msg.date,
+                    override_hour: o.hour as i32,
+                    is_active: o.is_active
+                })
+                .on_conflict((user_id, override_date, override_hour))
+                .do_update()
+                .set(is_active.eq(o.is_active))
+                .execute(&conn)?;
+        }
+
+        Ok(())
+    }
+}
+
+

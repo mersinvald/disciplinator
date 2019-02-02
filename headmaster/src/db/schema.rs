@@ -1,4 +1,13 @@
 table! {
+    active_hours_overrides (user_id, override_date, override_hour) {
+        user_id -> Int8,
+        override_date -> Date,
+        override_hour -> Int4,
+        is_active -> Bool,
+    }
+}
+
+table! {
     fitbit (user_id) {
         user_id -> Int8,
         client_id -> Varchar,
@@ -45,6 +54,7 @@ table! {
 }
 
 allow_tables_to_appear_in_same_query!(
+    active_hours_overrides,
     fitbit,
     settings,
     summary_cache,

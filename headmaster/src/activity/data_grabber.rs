@@ -6,8 +6,8 @@ use log::warn;
 use std::marker::PhantomData;
 
 use crate::proto::Error as ServiceError;
-use crate::db::{DbExecutor, UpdateSettingsFitbit, GetSettingsFitbit, GetCachedFitbitResponse, PutCachedFitbitResponse, models::UpdateFitbitCredentials};
-
+use crate::proto::http::ActivityOverride;
+use crate::db::{DbExecutor, UpdateSettingsFitbit, GetSettingsFitbit, GetCachedFitbitResponse, PutCachedFitbitResponse, GetActiveHoursOverrides, models::UpdateFitbitCredentials};
 use tokio_async_await::compat::backward::Compat;
 use actix_web_async_await::await;
 use actix_web::actix::{Message, Actor, Context, Handler, Addr, ResponseFuture};
@@ -16,6 +16,8 @@ use actix_web::actix::{Message, Actor, Context, Handler, Addr, ResponseFuture};
 pub struct Data {
     pub sleep_intervals: Vec<SleepInterval>,
     pub hourly_activity: Vec<HourlyActivityStats>,
+    #[serde(skip)]
+    pub activity_overrides: Vec<ActivityOverride>,
 }
 
 pub struct DataGrabberExecutor {
@@ -46,11 +48,18 @@ impl<A: ActivityGrabber> Message for GetData<A>
 
 impl GetData<FitbitActivityGrabber> {
     pub async fn get_data(self, db: Addr<DbExecutor>) -> Result<Data, Error> {
+        // Query activity overrides before loading the cache
+        let activity_overrides = await!(db.send(GetActiveHoursOverrides(
+            self.user_id,
+            self.date
+        )))??;
+
         // Query cache for data
-        let cached = await!(db.send(GetCachedFitbitResponse(self.user_id)))??
+        let cached: Option<Data> = await!(db.send(GetCachedFitbitResponse(self.user_id)))??
             .and_then(|s| serde_json::from_str(&s).ok());
 
-        if let Some(cached) = cached {
+        if let Some(mut cached) = cached {
+            cached.activity_overrides = activity_overrides;
             return Ok(cached);
         }
 
@@ -100,6 +109,7 @@ impl GetData<FitbitActivityGrabber> {
         let data = Data {
             sleep_intervals,
             hourly_activity,
+            activity_overrides
         };
 
         // Update cache (panic here is definitely highly unlikely and should crash the server if happens)

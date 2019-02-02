@@ -1,7 +1,7 @@
 use crate::db::schema::*;
 use diesel::{Queryable, Insertable};
 use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc, NaiveTime};
+use chrono::{NaiveDate, DateTime, Utc, NaiveTime};
 use uuid::Uuid;
 
 #[derive(Queryable, Serialize, Debug, Deserialize)]
@@ -97,4 +97,13 @@ pub struct SummaryCache {
     pub user_id: i64,
     pub created_at: DateTime<Utc>,
     pub summary: String,
+}
+
+#[derive(Queryable, Insertable)]
+#[table_name = "active_hours_overrides"]
+pub struct ActiveHoursOverrides {
+    pub user_id: i64,
+    pub override_date: NaiveDate,
+    pub override_hour: i32,
+    pub is_active: bool,
 }

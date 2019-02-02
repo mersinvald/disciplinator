@@ -217,18 +217,24 @@ impl DebtEvaluator {
 
         hours.iter_mut().for_each(|h| {
             for interval in &sleep_intervals {
-                // Zero debt, zero overtime
-                let activity_during_sleep = self.config.minimum_active_time;
                 if h.hour >= interval.start.hour() && h.hour < interval.end.hour() {
-                    h.accounted_active_minutes = activity_during_sleep;
                     h.tracking_disabled = true;
                 } else if h.hour == interval.end.hour() {
-                    h.accounted_active_minutes =
-                        u32::min(interval.end.minute(), activity_during_sleep);
-                    if h.accounted_active_minutes == activity_during_sleep {
+                    if interval.end.minute() > (60 - self.config.minimum_active_time) {
                         h.tracking_disabled = true;
                     }
                 }
+            }
+        });
+
+        for over in &self.data.activity_overrides {
+            hours[over.hour as usize].tracking_disabled = !over.is_active;
+        }
+
+        let activity_during_sleep = self.config.minimum_active_time;
+        hours.iter_mut().for_each(|h| {
+            if h.tracking_disabled {
+                h.accounted_active_minutes = u32::max(h.active_minutes, activity_during_sleep)
             }
         });
 
