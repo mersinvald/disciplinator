@@ -7,7 +7,7 @@ use std::marker::PhantomData;
 
 use crate::activity::data_grabber::{Data as ActivityData, DataGrabberExecutor, GetData};
 use crate::db::{DbExecutor, GetSettings};
-use crate::proto::activity::{HourSummary, Status, Summary};
+use crate::proto::activity::{HourSummary, Status, Summary, DaySumup};
 
 use actix_web::actix::{Actor, Addr, Context, Handler, Message, ResponseFuture};
 use actix_web_async_await::await;
@@ -121,7 +121,7 @@ impl DebtEvaluator {
 }
 
 impl DebtEvaluator {
-    pub fn current_hour_and_day_log(&self) -> (HourSummary, Vec<HourSummary>) {
+    pub fn current_summary_and_day_log(&self) -> (DaySumup, Vec<HourSummary>) {
         let hours = self.get_active_minutes_hourly();
         debug!("ABSOLUTE DEBT: \n{:#?}", hours);
         let hours = self.exclude_inactive_hours(hours);
@@ -133,7 +133,18 @@ impl DebtEvaluator {
         let debt = self.calculate_debt(&hours);
         info!("CURRENT DEBT: {}", debt);
 
-        let last_hour = hours.last().cloned().unwrap_or_else(|| {
+        let sumup = DaySumup {
+            debt: hours.last().map(|x| x.debt).unwrap_or(0),
+            active_minutes: hours.iter().map(|x| x.active_minutes).sum(),
+        };
+
+        (sumup, hours)
+    }
+
+    pub fn current_summary(&self) -> Summary {
+        // Get last stats from Fitbit
+        let (sumup, day_log) = self.current_summary_and_day_log();
+        let last_hour = day_log.last().cloned().unwrap_or_else(|| {
             error!("last hour info is not available");
             HourSummary {
                 complete: true,
@@ -142,24 +153,17 @@ impl DebtEvaluator {
             }
         });
 
-        (last_hour, hours)
-    }
-
-    pub fn current_summary(&self) -> Summary {
-        // Get last stats from Fitbit
-        let (hour, day_log) = self.current_hour_and_day_log();
-
         // Calculate the correct system state:
         // 1. debt > 0 and user haven't been active >= max hourly accounted time => DebtCollection
         // 2. debt > 0 and user can't log more time this hour due to the limit => DebtCollectionPaused
         // 3. no debt => Normal
         let max_accounted = self.config.max_accounted_active_minutes;
-        let state = if hour.debt > 0 && hour.active_minutes < max_accounted {
-            Status::DebtCollection(hour)
-        } else if hour.debt > 0 && hour.active_minutes >= max_accounted {
-            Status::DebtCollectionPaused(hour)
+        let state = if sumup.debt > 0 && last_hour.active_minutes < max_accounted {
+            Status::DebtCollection(sumup)
+        } else if sumup.debt > 0 && last_hour.active_minutes >= max_accounted {
+            Status::DebtCollectionPaused(sumup)
         } else {
-            Status::Normal(hour)
+            Status::Normal(sumup)
         };
 
         Summary {

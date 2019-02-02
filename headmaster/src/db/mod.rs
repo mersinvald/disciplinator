@@ -62,13 +62,15 @@ impl Handler<CreateUser> for DbExecutor {
             .filter(username.eq(&msg.username))
             .limit(1)
             .load::<User>(&conn)?
-            .len() != 0;
+            .len()
+            != 0;
 
         if username_exists {
             return Err(ServiceError::CredentialsConflict {
                 key: "username".into(),
-                value: msg.username.clone()
-            }.into());
+                value: msg.username.clone(),
+            }
+            .into());
         }
 
         // Check that there's no user with the same email
@@ -76,13 +78,15 @@ impl Handler<CreateUser> for DbExecutor {
             .filter(email.eq(&msg.email))
             .limit(1)
             .load::<User>(&conn)?
-            .len() != 0;
+            .len()
+            != 0;
 
         if email_exists {
             return Err(ServiceError::CredentialsConflict {
                 key: "email".into(),
-                value: msg.email.clone()
-            }.into());
+                value: msg.email.clone(),
+            }
+            .into());
         }
 
         // Insert new user
@@ -333,7 +337,8 @@ impl Handler<UpdateSettings> for DbExecutor {
         let first_update = settings
             .filter(user_id.eq(msg.user_id))
             .count()
-            .first::<i64>(&conn)? == 0;
+            .first::<i64>(&conn)?
+            == 0;
 
         debug!("first settings update");
 
@@ -490,7 +495,8 @@ impl Handler<UpdateSettingsFitbit> for DbExecutor {
         let first_update = fitbit
             .filter(user_id.eq(msg.user_id))
             .count()
-            .first::<i64>(&conn)? == 0;
+            .first::<i64>(&conn)?
+            == 0;
 
         // If so -- check that all NOT NULL fields are present in the update
         if first_update {

@@ -14,9 +14,9 @@ impl DataResponse for Summary {}
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "type")]
 pub enum Status {
-    Normal(HourSummary),
-    DebtCollection(HourSummary),
-    DebtCollectionPaused(HourSummary),
+    Normal(DaySumup),
+    DebtCollection(DaySumup),
+    DebtCollectionPaused(DaySumup),
 }
 
 impl DataResponse for Status {}
@@ -41,4 +41,10 @@ pub struct HourSummary {
     pub accounted_active_minutes: u32,
     pub tracking_disabled: bool,
     pub complete: bool,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default, Serialize, Deserialize)]
+pub struct DaySumup {
+    pub debt: u32,
+    pub active_minutes: u32,
 }
