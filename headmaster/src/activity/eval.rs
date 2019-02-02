@@ -1,30 +1,46 @@
-use priestess::{FitbitActivityGrabber, FitbitAuthData, ActivityGrabber, SleepInterval, ActivityGrabberError};
+use priestess::{ActivityGrabber, SleepInterval};
 use chrono::NaiveDateTime;
-use chrono::{NaiveTime, NaiveDate, Timelike};
+use chrono::{NaiveTime, Timelike};
 use failure::Error;
 use log::{info, debug, error};
 use std::marker::PhantomData;
 
 use crate::proto::activity::{Summary, HourSummary, Status};
+use crate::db::{DbExecutor, GetSettings};
+use crate::activity::data_grabber::{DataGrabberExecutor, GetData, Data as ActivityData};
 
-use actix_web::actix::{Message, Actor, SyncContext, Handler};
+use tokio_async_await::compat::backward::Compat;
+use actix_web_async_await::await;
+use actix_web::actix::{Message, Actor, Context, Handler, Addr, ResponseFuture};
 
-pub struct HeadmasterExecutor;
+#[derive(Clone)]
+pub struct DebtEvaluatorExecutor {
+    db: Addr<DbExecutor>,
+    grabber: Addr<DataGrabberExecutor>,
+}
 
-impl Actor for HeadmasterExecutor {
-    type Context = SyncContext<Self>;
+impl DebtEvaluatorExecutor {
+    pub fn new(db: Addr<DbExecutor>, grabber: Addr<DataGrabberExecutor>) -> Self {
+        Self { db, grabber }
+    }
+}
+
+impl Actor for DebtEvaluatorExecutor {
+    type Context = Context<Self>;
 }
 
 pub struct GetSummary<G: ActivityGrabber> {
-    config: HeadmasterConfig,
-    auth: G::AuthData,
+    user_id: i64,
+    datetime: NaiveDateTime,
+    _marker: PhantomData<G>,
 }
 
 impl<G: ActivityGrabber> GetSummary<G> {
-    pub fn new(config: HeadmasterConfig, auth: G::AuthData) -> Self {
+    pub fn new(user_id: i64, datetime: NaiveDateTime) -> Self {
         GetSummary {
-            config,
-            auth,
+            user_id,
+            datetime,
+            _marker: PhantomData
         }
     }
 }
@@ -32,88 +48,81 @@ impl<G: ActivityGrabber> GetSummary<G> {
 impl<G: ActivityGrabber> Message for GetSummary<G>
     where G::Token: 'static
 {
-    type Result = Result<(Summary, G::Token), Error>;
+    type Result = Result<Summary, Error>;
 }
 
-impl<G: ActivityGrabber> Handler<GetSummary<G>> for HeadmasterExecutor
-    where G::Token: 'static
+impl<A: ActivityGrabber> Handler<GetSummary<A>> for DebtEvaluatorExecutor
+    where A: 'static
 {
-    type Result = Result<(Summary, G::Token), Error>;
+    type Result = ResponseFuture<Summary, Error>;
 
-    fn handle(&mut self, msg: GetSummary<G>, _: &mut Self::Context) -> Self::Result {
-        let headmaster = Headmaster::new(msg.config, msg.auth);
-        let worker = headmaster.login()?;
-        // WTF RUST CAN'T INFER FUCKING TYPE WITH
-        // worker.get_token().clone()
-        let token = <HeadmasterWorker<G>>::get_token(&worker).clone();
-        let summary = worker.current_summary()?;
-        Ok((summary, token))
+    fn handle(&mut self, msg: GetSummary<A>, _: &mut Self::Context) -> Self::Result {
+        Box::new(Compat::new(self.clone().evaluate(msg)))
+    }
+}
+
+impl DebtEvaluatorExecutor {
+    async fn evaluate<A: ActivityGrabber + 'static>(self, msg: GetSummary<A>) -> Result<Summary, Error> {
+        let settings = await!(self.db.send(GetSettings(msg.user_id)))??;
+
+        let config = DebtEvaluatorConfig {
+            minimum_active_time: settings.hourly_activity_goal as u32,
+            max_accounted_active_minutes: settings.hourly_activity_limit
+                .unwrap_or(settings.hourly_activity_goal * 3) as u32,
+            debt_limit: settings.hourly_debt_limit
+                .unwrap_or(settings.hourly_activity_goal * 3) as u32,
+            day_begins_at: settings.day_starts_at,
+            day_ends_at: settings.day_ends_at,
+            day_length: settings.day_length
+                .map(|l| l as u32)
+                .unwrap_or(settings.day_ends_at.hour() - settings.day_starts_at.hour()),
+        };
+
+        let data = await!(self.grabber.send(GetData::new(
+            msg.user_id,
+            msg.datetime.date(),
+        )))??;
+
+        let evaluator = DebtEvaluator::new(
+            config,
+            data
+        );
+
+        let summary = evaluator.current_summary();
+
+        Ok(summary)
     }
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct HeadmasterConfig {
+pub struct DebtEvaluatorConfig {
     pub minimum_active_time: u32,
     pub max_accounted_active_minutes: u32,
     pub debt_limit: u32,
     pub day_begins_at: NaiveTime,
     pub day_ends_at: NaiveTime,
     pub day_length: u32,
-    pub user_date_time: NaiveDateTime,
 }
 
-pub struct Headmaster<G: ActivityGrabber> {
-    auth: G::AuthData,
-    config: HeadmasterConfig,
+pub struct DebtEvaluator {
+    config: DebtEvaluatorConfig,
+    data: ActivityData,
 }
 
-impl<G: ActivityGrabber> Headmaster<G> {
-    pub fn new(config: HeadmasterConfig, auth: G::AuthData) -> Self {
-        Headmaster {
-            auth,
+impl DebtEvaluator {
+    pub fn new(config: DebtEvaluatorConfig, data: ActivityData) -> Self {
+        DebtEvaluator {
             config,
+            data,
         }
     }
-
-    pub fn login(self) -> Result<HeadmasterWorker<G>, Error> {
-        info!("logging into FitBit API");
-        let grabber = G::new(&self.auth)
-            // Convert NewNewToken error into TokenExpired error, so it would be handled correctly by webserver
-            .map_err(|e| {
-                match e.downcast::<ActivityGrabberError>() {
-                    Ok(age) => match age {
-                        ActivityGrabberError::NeedNewToken => crate::proto::Error::TokenExpired.into(),
-                        err => err.into()
-                    },
-                    Err(err) => err,
-                }
-            })?;
-
-        Ok(HeadmasterWorker {
-            config: self.config,
-            grabber,
-        })
-    }
 }
 
-pub struct HeadmasterWorker<G: ActivityGrabber> {
-    config: HeadmasterConfig,
-    grabber: G,
-}
-
-static NOT_LOGGED_IN_PANIC_MSG: &str =
-    "FitbitGrabber not logged into FirBit API. Login should be performed before any request.";
-
-impl<G: ActivityGrabber> HeadmasterWorker<G> {
-    pub fn get_token(&self) -> &G::Token {
-        self.grabber.get_token()
-    }
-
-    pub fn current_hour_and_day_log(&self) -> Result<(HourSummary, Vec<HourSummary>), Error> {
-        info!("logged in succesfully");
-        let hours = self.get_active_minutes_hourly()?;
+impl DebtEvaluator {
+    pub fn current_hour_and_day_log(&self) -> (HourSummary, Vec<HourSummary>) {
+        let hours = self.get_active_minutes_hourly();
         debug!("ABSOLUTE DEBT: \n{:#?}", hours);
-        let hours = self.exclude_inactive_hours(hours)?;
+        let hours = self.exclude_inactive_hours(hours);
         debug!("NORMALIZED BY SLEEPING HOURS: \n{:#?}", hours);
         let hours = self.normalize_by_threshold(hours);
         info!("NORMALIZED BY THRESHOLD: \n{:#?}", hours);
@@ -131,12 +140,12 @@ impl<G: ActivityGrabber> HeadmasterWorker<G> {
             }
         });
 
-        Ok((last_hour, hours))
+        (last_hour, hours)
     }
 
-    pub fn current_summary(&self) -> Result<Summary, Error> {
+    pub fn current_summary(&self) -> Summary {
         // Get last stats from Fitbit
-        let (hour, day_log) = self.current_hour_and_day_log()?;
+        let (hour, day_log) = self.current_hour_and_day_log();
 
         // Calculate the correct system state:
         // 1. debt > 0 and user haven't been active >= max hourly accounted time => DebtCollection
@@ -151,15 +160,12 @@ impl<G: ActivityGrabber> HeadmasterWorker<G> {
             Status::Normal(hour)
         };
 
-        let summary = Summary { status: state, day_log };
-
-        Ok(summary)
+        Summary { status: state, day_log }
     }
 
-    fn get_active_minutes_hourly(&self) -> Result<Vec<HourSummary>, Error> {
-        let data = self
-            .grabber
-            .fetch_hourly_activity(self.current_date())?
+    fn get_active_minutes_hourly(&self) -> Vec<HourSummary> {
+        self.data
+            .hourly_activity
             .iter()
             .map(|h| HourSummary {
                 hour: h.hour,
@@ -168,18 +174,12 @@ impl<G: ActivityGrabber> HeadmasterWorker<G> {
                 accounted_active_minutes: h.active_minutes,
                 ..Default::default()
             })
-            .collect::<Vec<_>>();
-
-        Ok(data)
+            .collect::<Vec<_>>()
     }
 
-    fn exclude_inactive_hours(&self, mut hours: Vec<HourSummary>) -> Result<Vec<HourSummary>, Error> {
-        // Fetch the sleeping intervals from FitBit API
-        let mut sleep_intervals = self
-            .grabber
-            .fetch_sleep_intervals(self.current_date())?;
-
-        debug!("sleep intervals: {:#?}", sleep_intervals);
+    fn exclude_inactive_hours(&self, mut hours: Vec<HourSummary>) -> Vec<HourSummary> {
+        let mut sleep_intervals = self.data.sleep_intervals.clone();
+        debug!("sleep intervals: {:#?}", self.data.sleep_intervals);
 
         // If no data there, fallback to config defined day start time
         if sleep_intervals.is_empty() {
@@ -192,7 +192,7 @@ impl<G: ActivityGrabber> HeadmasterWorker<G> {
         // Calculate day end
         let day_end = sleep_intervals.iter().fold(None, |day_end, interval| {
             let end = if day_end.is_none() {
-                Some(interval.end + chrono::Duration::hours(self.config.day_length as i64))
+                Some(interval.end + chrono::Duration::hours(i64::from(self.config.day_length)))
             } else {
                 day_end.map(|time| time + (interval.end - interval.start))
             };
@@ -232,7 +232,7 @@ impl<G: ActivityGrabber> HeadmasterWorker<G> {
             }
         });
 
-        Ok(hours)
+        hours
     }
 
     fn normalize_by_threshold(&self, mut hours: Vec<HourSummary>) -> Vec<HourSummary> {
@@ -270,9 +270,5 @@ impl<G: ActivityGrabber> HeadmasterWorker<G> {
 
     fn calculate_debt(&self, hours: &[HourSummary]) -> u32 {
         hours.last().map(|h| h.debt).unwrap_or(0)
-    }
-
-    fn current_date(&self) -> NaiveDate {
-        self.config.user_date_time.date()
     }
 }

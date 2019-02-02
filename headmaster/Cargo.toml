@@ -33,3 +33,4 @@ sha2 = "0.8.0"
 uuid = { version = "0.6", features = ["serde", "v4"] }
 actix-web-async-await = "0.2.0"
 envy = "0.3.3"
+tokio-async-await = "0.1.5"

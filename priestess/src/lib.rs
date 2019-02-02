@@ -1,23 +1,24 @@
 mod fitbit_grabber;
 
+use serde::{Serialize, Deserialize};
 pub use crate::fitbit_grabber::{FitbitActivityGrabber, FitbitAuthData, FitbitToken, TokenJson};
 use failure::{Fail, Error};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct DailyActivityStats {
     pub sedentary_minutes: u32,
     pub active_minutes: u32,
     pub detailed: Option<DetailedActivityStats>,
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DetailedActivityStats {
     pub lightly_active: u32,
     pub fairly_active: u32,
     pub heavy_active: u32,
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct HourlyActivityStats {
     pub hour: u32,
     pub complete: bool,
@@ -26,7 +27,7 @@ pub struct HourlyActivityStats {
     pub detailed: Option<DetailedActivityStats>,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct SleepInterval {
     pub start: chrono::NaiveTime,
     pub end: chrono::NaiveTime,

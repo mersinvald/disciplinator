@@ -2,7 +2,7 @@ pub mod activity;
 pub mod http;
 
 
-use failure::{Fail, AsFail};
+use failure::Fail;
 pub use self::activity::{HourSummary, Status, Summary};
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 use actix_web::actix::MailboxError;

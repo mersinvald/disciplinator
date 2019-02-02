@@ -22,6 +22,7 @@ pub enum Status {
 impl DataResponse for Status {}
 
 impl Status {
+    #[allow(dead_code)]
     pub fn is_debt_collection(self) -> bool {
         match self {
             Status::DebtCollection(..) => true,

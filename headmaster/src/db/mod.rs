@@ -1,23 +1,20 @@
 pub mod schema;
 pub mod models;
 
-use self::models::{User, NewUser, Token, Settings, FitbitCredentials, UpdateFitbitCredentials, SummaryCache};
+use self::models::{User, NewUser, Token, Settings, FitbitCredentials, SummaryCache};
 
 use diesel::prelude::*;
-use diesel::associations::*;
 
 use actix_web::actix::{Message, Actor, SyncContext, Handler};
 use r2d2::Pool;
 use diesel::r2d2::ConnectionManager;
 use diesel::PgConnection;
-use std::io;
-use failure::{Fail, Error};
+use failure::Error;
 use crate::proto::Error as ServiceError;
 use crate::proto::http as proto_http;
-use sha2::{Sha256, Digest};
 use uuid::Uuid;
-use log::{debug, info};
-use chrono::{DateTime, Utc, Datelike};
+use log::debug;
+use chrono::Utc;
 
 use actix_web::Json;
 
@@ -133,7 +130,7 @@ impl Handler<LoginUser> for DbExecutor {
 
         debug!("fetching user for login {}", msg.username);
 
-        let mut fetched_user = users
+        let fetched_user = users
             .filter(username.eq(&msg.username))
             .filter(passwd_hash.eq(&msg.passwd_hash))
             .first::<User>(&conn)
@@ -223,7 +220,6 @@ pub struct UpdateUser {
 
 impl UpdateUser {
     pub fn new(user_id: i64, update: proto_http::UpdateUser) -> Self {
-        let email_verified = update.email.as_ref().map(|_| true);
         UpdateUser {
             user_id,
             update,
@@ -242,7 +238,7 @@ impl Message for UpdateUser {
 impl Handler<UpdateUser> for DbExecutor {
     type Result = Result<User, Error>;
 
-    fn handle(&mut self, msg: UpdateUser, c: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: UpdateUser, _: &mut Self::Context) -> Self::Result {
         use self::schema::users::dsl::*;
 
         let conn = self.0.get()?;
@@ -288,7 +284,7 @@ impl Message for GetSettings {
 impl Handler<GetSettings> for DbExecutor {
     type Result = Result<Settings, Error>;
 
-    fn handle(&mut self, msg: GetSettings, c: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: GetSettings, _: &mut Self::Context) -> Self::Result {
         use self::schema::settings::dsl::*;
 
         let conn = self.0.get()?;
@@ -297,7 +293,7 @@ impl Handler<GetSettings> for DbExecutor {
             .filter(user_id.eq(msg.0))
             .load::<Settings>(&conn)?;
 
-        if s.len() == 0 {
+        if s.is_empty() {
             let keys = [
                 "hourly_activity_goal",
                 "day_starts_at",
@@ -332,7 +328,7 @@ impl Message for UpdateSettings {
 impl Handler<UpdateSettings> for DbExecutor {
     type Result = Result<Settings, Error>;
 
-    fn handle(&mut self, msg: UpdateSettings, c: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: UpdateSettings, _: &mut Self::Context) -> Self::Result {
         use self::schema::settings::dsl::*;
 
         let conn = self.0.get()?;
@@ -432,7 +428,7 @@ impl Message for GetSettingsFitbit {
 impl Handler<GetSettingsFitbit> for DbExecutor {
     type Result = Result<FitbitCredentials, Error>;
 
-    fn handle(&mut self, msg: GetSettingsFitbit, c: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: GetSettingsFitbit, _: &mut Self::Context) -> Self::Result {
         use self::schema::fitbit::dsl::*;
 
         let conn = self.0.get()?;
@@ -441,7 +437,7 @@ impl Handler<GetSettingsFitbit> for DbExecutor {
             .filter(user_id.eq(msg.0))
             .load::<FitbitCredentials>(&conn)?;
 
-        if s.len() == 0 {
+        if s.is_empty() {
             let keys = [
                 "client_id",
                 "client_secret",
@@ -459,13 +455,7 @@ pub struct UpdateSettingsFitbit {
 }
 
 impl UpdateSettingsFitbit {
-    pub fn new(user_id: i64, mut update: models::UpdateFitbitCredentials) -> Self {
-        // Make sure to overwrite Token with NULL if credentials are changed
-        if update.client_token.is_none() && (update.client_id.is_some() || update.client_secret.is_some()) {
-            debug!("fitbit credentials updated: nulling the token");
-            update.client_token = Some(None)
-        };
-
+    pub fn new(user_id: i64, update: models::UpdateFitbitCredentials) -> Self {
         UpdateSettingsFitbit {
             user_id,
             changeset: update
@@ -484,7 +474,7 @@ impl Message for UpdateSettingsFitbit {
 impl Handler<UpdateSettingsFitbit> for DbExecutor {
     type Result = Result<FitbitCredentials, Error>;
 
-    fn handle(&mut self, msg: UpdateSettingsFitbit, c: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: UpdateSettingsFitbit, _: &mut Self::Context) -> Self::Result {
         use self::schema::fitbit::dsl::*;
 
         let conn = self.0.get()?;
@@ -515,7 +505,7 @@ impl Handler<UpdateSettingsFitbit> for DbExecutor {
                     user_id: msg.user_id,
                     client_id: msg.changeset.client_id.unwrap(),
                     client_secret: msg.changeset.client_secret.unwrap(),
-                    client_token: msg.changeset.client_token.unwrap_or(None),
+                    client_token: msg.changeset.client_token,
                 })
                 .get_result(&conn)?
         } else {
@@ -537,7 +527,7 @@ impl Message for GetCachedFitbitResponse {
 
 impl Handler<GetCachedFitbitResponse> for DbExecutor {
     type Result = Result<Option<String>, Error>;
-    fn handle(&mut self, msg: GetCachedFitbitResponse, c: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: GetCachedFitbitResponse, _: &mut Self::Context) -> Self::Result {
         use self::schema::summary_cache::dsl::*;
 
         let conn = self.0.get()?;
@@ -562,15 +552,15 @@ impl Handler<GetCachedFitbitResponse> for DbExecutor {
 }
 
 
-pub struct PutCachedSummary(pub i64, pub String);
+pub struct PutCachedFitbitResponse(pub i64, pub String);
 
-impl Message for PutCachedSummary {
+impl Message for PutCachedFitbitResponse {
     type Result = Result<(), Error>;
 }
 
-impl Handler<PutCachedSummary> for DbExecutor {
+impl Handler<PutCachedFitbitResponse> for DbExecutor {
     type Result = Result<(), Error>;
-    fn handle(&mut self, msg: PutCachedSummary, c: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: PutCachedFitbitResponse, _: &mut Self::Context) -> Self::Result {
         use self::schema::summary_cache::dsl::*;
 
         let conn = self.0.get()?;

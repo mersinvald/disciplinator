@@ -1,6 +1,6 @@
 use crate::db::schema::*;
 use diesel::{Queryable, Insertable};
-use serde::{Serialize, Deserialize, Deserializer};
+use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc, NaiveTime};
 use uuid::Uuid;
 
@@ -79,8 +79,7 @@ pub struct FitbitCredentials {
 pub struct UpdateFitbitCredentials {
     pub client_id: Option<String>,
     pub client_secret: Option<String>,
-    #[serde(default, deserialize_with = "some_option")]
-    pub client_token: Option<Option<String>>,
+    pub client_token: Option<String>,
 }
 
 #[derive(Queryable, Insertable, Serialize, Deserialize)]
@@ -98,11 +97,4 @@ pub struct SummaryCache {
     pub user_id: i64,
     pub created_at: DateTime<Utc>,
     pub summary: String,
-}
-
-fn some_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
-    where T: Deserialize<'de>,
-          D: Deserializer<'de>
-{
-    Option::<T>::deserialize(deserializer).map(Some)
 }

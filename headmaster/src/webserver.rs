@@ -1,29 +1,22 @@
-use failure::{Fail};
 use futures::Future;
-use futures::future;
 use uuid::Uuid;
 use std::cell::RefCell;
-use std::str::FromStr;
-use log::{info, debug};
-use std::sync::Arc;
+use log::debug;
 use std::rc::Rc;
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
+use serde::Serialize;
 
 use actix_web_async_await::{await, compat, compat2};
 use actix_web::actix;
-use actix_web::actix::{SyncArbiter, Addr, Message};
+use actix_web::actix::{Addr, Message};
 use actix_web::{
     server,
-    http::{Method, header},
+    http::Method,
     App,
     Error,
     HttpRequest,
     HttpResponse,
     ResponseError,
-    Responder,
-    HttpMessage,
-    AsyncResponder,
     Json,
     Path,
     dev::JsonConfig,
@@ -35,32 +28,20 @@ use actix_web::middleware::{
     self,
     Middleware,
     Started,
-    Response as MwResponse,
-    session::{
-        SessionBackend,
-        SessionImpl,
-        SessionStorage,
-        Session,
-    }
 };
 
-use chrono::{NaiveDateTime, Timelike};
+use chrono::NaiveDateTime;
 
-use crate::proto::{HourSummary, Status, Summary};
-use priestess::{
-    ActivityGrabber, FitbitActivityGrabber, FitbitAuthData, FitbitToken, SleepInterval, TokenJson,
-};
+use crate::proto::Summary;
+use priestess::FitbitActivityGrabber;
 
 use crate::config::Config;
 use crate::db::{self, DbExecutor};
 use crate::proto::http;
 use crate::proto::Error as ServiceError;
-use crate::proto::IntoError;
 use crate::proto::Response;
-use crate::master::HeadmasterExecutor;
-use crate::master;
-
-use crate::db::models::User;
+use crate::activity::eval::DebtEvaluatorExecutor;
+use crate::activity::eval;
 
 type HttpResult = Result<HttpResponse, ServiceError>;
 
@@ -130,66 +111,9 @@ async fn do_get_summary(state: &AppState, timestamp: i64, user_id: i64) -> Resul
     let datetime = NaiveDateTime::from_timestamp(timestamp, 0);
     debug!("client time: {}", datetime);
 
-    // Get needed actors from state
-    let db = &state.db;
-    let headmaster = &state.headmaster;
-
-    // Try to get summary from cache
-    let cached_summary = await!(db.send(db::GetCachedFitbitResponse(user_id)))??
-        .and_then(|s| serde_json::from_str(&s).ok());
-
-    if let Some(cached) = cached_summary {
-        return Ok(cached);
-    }
-
-    // Fetch settings and Fitbit credentials
-    let settings = await!(db.send(db::GetSettings(user_id)))??;
-    let mut fitbit = await!(db.send(db::GetSettingsFitbit(user_id)))??;
-
-    // Check if there is no token
-    let fitbit_token = fitbit.client_token.take()
-        .ok_or(ServiceError::TokenExpired)?;
-
-    // Deserialize token
-    let fitbit_token = FitbitToken::from_json(&fitbit_token)
-        .map_err(|_| ServiceError::TokenExpired)?;
-
-    // Construct headmaster config
-    let headmaster_config = master::HeadmasterConfig {
-        // Guaranteed to be < 180 by checks in database
-        minimum_active_time: settings.hourly_activity_goal as u32,
-        max_accounted_active_minutes: settings.hourly_activity_limit.unwrap_or(settings.hourly_activity_goal * 3) as u32,
-        debt_limit: settings.hourly_debt_limit.unwrap_or(settings.hourly_activity_goal * 3) as u32,
-        day_begins_at: settings.day_starts_at ,
-        day_ends_at: settings.day_ends_at,
-        day_length: settings.day_length.map(|l| l as u32).unwrap_or(settings.day_ends_at.hour() - settings.day_starts_at.hour()),
-        user_date_time: datetime,
-    };
-
-    // Construct fitbit grabber authentication data
-    let auth_data = FitbitAuthData {
-        id: fitbit.client_id,
-        secret: fitbit.client_secret,
-        token: fitbit_token,
-    };
-
     // Request summary and new token from Headmaster actor
-    let message = master::GetSummary::<FitbitActivityGrabber>::new(headmaster_config, auth_data);
-    let request = headmaster.send(message);
-    let (summary, new_token) = await!(request)??;
-
-    // Update Fitbit token in database
-    let new_token = new_token.to_json();
-    let changeset = db::models::UpdateFitbitCredentials {
-        client_token: Some(Some(new_token)),
-        ..Default::default()
-    };
-    let message = db::UpdateSettingsFitbit::new(user_id, changeset);
-    await!(db.send(message))??;
-
-    // Update cache
-    let new_cache = serde_json::to_string(&summary).expect("failed to encode summary into JSON");
-    await!(db.send(db::PutCachedSummary(user_id, new_cache)))??;
+    let message = eval::GetSummary::<FitbitActivityGrabber>::new(user_id, datetime);
+    let summary = await!(state.evaluator.send(message))??;
 
     // Return summary
     Ok(summary)
@@ -235,16 +159,16 @@ async fn update_user(json: Json<http::UpdateUser>, req: HttpRequest<AppState>) -
     await!(response)
 }
 
-async fn validate_email(req: HttpRequest<AppState>) -> HttpResult {
+async fn validate_email(_req: HttpRequest<AppState>) -> HttpResult {
     Ok(ServiceError::NotImplemented.error_response())
 }
 
-pub fn start(config: Config, db_addr: Addr<DbExecutor>, headmaster: Addr<HeadmasterExecutor>) -> Result<Addr<Server>, Error> {
+pub fn start(config: Config, db_addr: Addr<DbExecutor>, evaluator: Addr<DebtEvaluatorExecutor>) -> Result<Addr<Server>, Error> {
     let server = server::new(move || {
 
         let json_config = move |cfg: &mut (JsonConfig<AppState>, ())| {
             cfg.0.limit(4096)
-                .error_handler(|err, req| {
+                .error_handler(|err, _req| {
                     let err_msg = format!("{}", err);
                     actix_web::error::InternalError::from_response(
                         err, ServiceError::InvalidPayload {
@@ -256,7 +180,7 @@ pub fn start(config: Config, db_addr: Addr<DbExecutor>, headmaster: Addr<Headmas
 
         App::with_state(AppState {
                 db: db_addr.clone(),
-                headmaster: headmaster.clone(),
+                evaluator: evaluator.clone(),
                 token_map: Rc::new(RefCell::new(HashMap::new())),
             })
             .middleware(middleware::Logger::default())
@@ -295,7 +219,7 @@ pub fn start(config: Config, db_addr: Addr<DbExecutor>, headmaster: Addr<Headmas
 
 struct AppState {
     db: Addr<DbExecutor>,
-    headmaster: Addr<HeadmasterExecutor>,
+    evaluator: Addr<DebtEvaluatorExecutor>,
     token_map: Rc<RefCell<HashMap<Uuid, i64>>>,
 }
 
@@ -317,7 +241,7 @@ impl Middleware<AppState> for AuthMiddleware {
 fn verify_token(token: Uuid, state: &AppState) -> actix_web::Result<Started> {
     let token_map = state.token_map.clone();
     let user = state.db
-        .send(db::GetUserByToken(token.clone()))
+        .send(db::GetUserByToken(token))
         .from_err()
         .and_then(move |res| match res {
             Ok(user) => {
@@ -325,7 +249,7 @@ fn verify_token(token: Uuid, state: &AppState) -> actix_web::Result<Started> {
                 token_map.insert(token, user.id);
                 Ok(None)
             },
-            Err(e) => Ok(Some(ServiceError::Unauthorized.error_response()))
+            Err(_) => Ok(Some(ServiceError::Unauthorized.error_response()))
         });
 
     Ok(Started::Future(Box::new(user)))

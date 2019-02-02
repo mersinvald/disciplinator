@@ -1,44 +1,27 @@
-#![feature(await_macro, futures_api, async_await)]
+// FIXME: due to diesel improper handling of proc_macro imports
+//        this is necessary to suppress warnings
+#![allow(proc_macro_derive_resolution_fallback)]
 
+#![feature(await_macro, futures_api, async_await)]
 #[macro_use]
 extern crate diesel;
 
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, Timelike};
 use failure::Error;
-use log::{debug, error, info};
 
-use actix_web::actix::{SyncArbiter, Addr};
-use actix_web::{
-    server,
-    http::{Method, header},
-    App,
-    HttpRequest,
-    HttpResponse,
-    ResponseError,
-    Responder
-};
-
-use actix_web::middleware::{
-    self,
-    Middleware,
-    Started,
-};
-
-use headmaster::proto::{HourSummary, Status, Summary};
-use priestess::{
-    ActivityGrabber, FitbitActivityGrabber, FitbitAuthData, FitbitToken, SleepInterval, TokenJson
-};
+use actix_web::actix::{SyncArbiter, Actor};
 
 mod config;
-mod master;
+mod activity;
 mod proto;
 mod webserver;
 mod db;
 mod util;
 
 use crate::config::Config;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use structopt::StructOpt;
+
+
 
 #[derive(Clone, Debug, StructOpt)]
 #[structopt(
@@ -87,14 +70,18 @@ fn main() -> Result<(), Error> {
         move || DbExecutor(pool.clone())
     );
 
-    // Create Actix SyncArbiter for Headmaster
-    let headmaster = SyncArbiter::start(
-        // TODO: separate config entity
-        config.database_pool_size as usize,
-        move || master::HeadmasterExecutor
-    );
+    // Start ActivityDataGrabber
+    let activity_grabber = activity::data_grabber::DataGrabberExecutor::new(
+        db_addr.clone()
+    ).start();
 
-    let server = webserver::start(config, db_addr, headmaster)
+    // Create Actix SyncArbiter for Headmaster
+    let evaluator = activity::eval::DebtEvaluatorExecutor::new(
+        db_addr.clone(),
+        activity_grabber,
+    ).start();
+
+    webserver::start(config, db_addr, evaluator)
         .expect("webserver failed");
 
     sys.run();

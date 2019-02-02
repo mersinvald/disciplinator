@@ -1,6 +1,5 @@
-use chrono::NaiveTime;
-use failure::{format_err, Error};
-use serde::{Deserialize, Serialize};
+use failure::Error;
+use serde::Deserialize;
 use std::fmt::Display;
 use std::fs::File;
 use std::io::Read;
@@ -16,6 +15,7 @@ pub struct Config {
 }
 
 impl Config {
+    #[allow(clippy::or_fun_call)]
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self, Error> {
         // send warning if env is set without prefix
         if env::var("DATABASE_URL").or(env::var("DATABASE_POOL_SIZE")).or(env::var("LISTEN_ON")).is_ok() {
@@ -25,7 +25,7 @@ impl Config {
         let path = path.as_ref();
 
         // Firstly get the env config
-        let mut env = envy::prefixed("HEADMASTER_").from_env::<EnvConfig>()?;
+        let env = envy::prefixed("HEADMASTER_").from_env::<EnvConfig>()?;
 
         let config = Self::load_file(&path)
             .map_err(|e| warn!("failed to read config file '{}': {}", path.display(), e))
