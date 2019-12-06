@@ -1,5 +1,12 @@
 [![Build Status](https://travis-ci.com/mersinvald/disciplinator.svg?branch=master)](https://travis-ci.com/mersinvald/disciplinator)
 
+## Discontinued
+
+I don't have enough time and interest to continue developing this project, and, to be honest, I don't need it anymore :)
+This idea came to me while I was working remotely, hence I wasn't moving much, which was super bad for my health. But now I have an office job, and I overdo my step-goal every day, so `disciplinator` is kinda useless for me now.
+
+Stay fit and healthy, y'all!
+
 ### Disciplinator [WORK IN PROGRESS]
 Disciplinator is a motivatory tool that utilizes Fitbit personal API. It is designed to help in breaking the sedentary 
 lifestyle through motivating the user to keep being active each hour (except for sleeping hours and some evening Pizza Time).
